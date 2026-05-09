@@ -1,0 +1,25 @@
+# SKQD Smoke Test - Minimal configuration for quick testing
+# Run with: python run-study-skqd.py input/smoke-test.toml
+
+[global]
+# Output directory for study results
+output_dir = "~/output"
+
+# Minimal parameters for fast execution
+num_orbs = 4
+krylov_dim = 2
+dt_mult = 1.0
+shots = 256
+opt_level = 1
+# Hamiltonian parameters
+hopping = 1.0
+onsite = 5.0
+hybridization = 1.0
+filling_factor = -0.5
+# SQD post-processing parameters
+max_iter = 3
+num_batches = 2
+samples_per_batch = 50
+
+[smoke]
+noise = 0.01
