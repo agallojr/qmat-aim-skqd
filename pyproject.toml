@@ -27,7 +27,7 @@ dependencies = [
 ]
 
 [tool.setuptools]
-packages = {find = {where = ["."]}}
+packages = {find = {where = ["src"]}}
 
 [tool.uv.sources]
 q8020-cfd-metautil = { path = "../q8020/q8020-cfd-metautil", editable = true }
