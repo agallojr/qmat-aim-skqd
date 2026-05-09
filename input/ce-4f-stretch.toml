@@ -1,0 +1,72 @@
+# Ce 4f stretch case — full J=5/2 multiplet (5 f-orbitals)
+#
+# Cerium 4f impurity in a metallic host.  Full crystal-field-split
+# J=5/2 sextet reduced to 5 orbitals (one Kramers doublet frozen out).
+# Multi-orbital Anderson impurity model with Kanamori interactions:
+#   U   = 6.0 eV    intra-orbital Coulomb (4f-4f)
+#   U'  = 4.6 eV    inter-orbital Coulomb (≈ U - 2J_H)
+#   J_H = 0.7 eV    Hund's exchange coupling
+#   mu  = 3.0 eV    chemical potential
+#   V   = 0.4 eV    4f-conduction hybridization
+#
+# Crystal field: CEF splitting across 5 orbitals (cubic + trigonal)
+#   ε = [-0.15, -0.05, 0.0, 0.05, 0.15] eV
+#
+# 5 impurity orbitals × (1 + 1 bath each) = 10 spatial orbitals = 20 qubits
+# Hilbert dim C(10,5)² = 63,504 — ~160× the 12-qubit case
+#
+# Baseline result with krylov_dim=6, 65k shots:
+#   SQD energy  = -2.4268 eV
+#   FCI exact   = -2.8765 eV
+#   Error       ≈ 15.6%  (ansatz-limited, not shot-limited)
+#
+# At 20q the Aer simulator runs in seconds per case, so we sweep
+# aggressively over shots and Krylov dimension.
+#
+# Run with: q8020-sweep input/ce-4f-stretch.toml
+
+[global]
+_output_dir = "~/output"
+_script = "python src/run-skqd.py"
+_inject_outdir = "--output-dir"
+
+# System identification
+"--system-label" = "Ce 4f"
+# Multi-orbital mode — full J=5/2 multiplet
+"--num-imp-orbs" = 5
+"--num-bath-per-imp" = 1
+# Kanamori interactions
+"--onsite" = 6.0
+"--U-prime" = 4.6
+"--J-H" = 0.7
+"--mu" = 3.0
+"--hybridization" = 0.4
+"--crystal-field" = "-0.15,-0.05,0.0,0.05,0.15"
+# Krylov / circuit params
+"--dt-mult" = 1.0
+"--opt-level" = 1
+# SQD post-processing — generous budget
+"--max-iter" = 30
+"--num-batches" = 10
+"--samples-per-batch" = 800
+# Backend
+"--backend-type" = "sim"
+"--coupling-map" = "default"
+# Post-sweep convergence plot
+_final_postproc = ["python src/plot_convergence.py"]
+
+[statevector_k4]
+"--shots" = 0
+"--krylov-dim" = 4
+
+[statevector_k6]
+"--shots" = 0
+"--krylov-dim" = 6
+
+[sampled_k4]
+"--krylov-dim" = 4
+"--shots" = [16384, 65536, 262144]
+
+[sampled_k6]
+"--krylov-dim" = 6
+"--shots" = [16384, 65536, 262144]

@@ -1,5 +1,5 @@
 """
-Step 2: Construct Krylov circuits for SIAM.
+Step 2: Construct Krylov circuits for AIM.
 """
 
 import numpy as np
@@ -8,7 +8,6 @@ import scipy
 from qiskit import QuantumCircuit, QuantumRegister
 
 import skqd_helpers
-from step1_siam import siam_hamiltonian_momentum
 
 
 def construct_krylov_siam(
@@ -64,41 +63,30 @@ def construct_krylov_siam(
 
 
 def run_step2(
-    num_orbs: int = 10,
-    hopping: float = 1.0,
-    onsite: float = 5.0,
-    hybridization: float = 1.0,
+    h1e: np.ndarray,
+    h2e: np.ndarray,
     krylov_dim: int = 5,
-    filling_factor: float = -0.5,
     dt_multiplier: float = 1.0,
     add_measurements: bool = True,
 ) -> list[QuantumCircuit]:
-    """Run step 2: construct SIAM Krylov circuits.
+    """Run step 2: construct AIM Krylov circuits.
     
     Args:
-        num_orbs: Number of spatial orbitals (qubits = 2 * num_orbs)
-        hopping: Hopping parameter
-        onsite: Onsite energy (U)
-        hybridization: Hybridization strength
+        h1e: One-body Hamiltonian (num_orbs × num_orbs)
+        h2e: Two-body Hamiltonian
         krylov_dim: Number of Krylov basis states
-        filling_factor: Multiplier for chemical potential
         dt_multiplier: Multiplier for time step (default 1.0, try 6-10 for more evolution)
         add_measurements: Whether to add measurement gates
         
     Returns:
         List of Krylov circuits.
     """
-    chemical_potential = filling_factor * onsite
-    
-    hamiltonian = siam_hamiltonian_momentum(
-        num_orbs, hopping, onsite, hybridization, chemical_potential
-    )
-    
-    dt = dt_multiplier * np.pi / np.linalg.norm(hamiltonian[0], ord=2)
+    num_orbs = h1e.shape[0]
+    dt = dt_multiplier * np.pi / np.linalg.norm(h1e, ord=2)
     impurity_index = (num_orbs - 1) // 2
     
     circuits = construct_krylov_siam(
-        num_orbs, impurity_index, hamiltonian, dt, krylov_dim
+        num_orbs, impurity_index, (h1e, h2e), dt, krylov_dim
     )
     
     if add_measurements:
@@ -106,7 +94,7 @@ def run_step2(
             qc.measure_all()
     
     num_qubits = 2 * num_orbs
-    print(f"Constructed {len(circuits)} SIAM Krylov circuits ({num_qubits} qubits).")
+    print(f"Constructed {len(circuits)} AIM Krylov circuits ({num_qubits} qubits).")
     
     return circuits
 

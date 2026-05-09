@@ -1,0 +1,54 @@
+# Convergence study — AIM with 7 bath sites (16 qubits)
+#
+# Purpose: demonstrate SQD convergence behavior and shot-count sensitivity.
+# Large enough Hilbert space that SQD needs multiple iterations, small
+# enough to run on a laptop in a few minutes.
+#
+#   U  = 2.0 eV   screened Coulomb repulsion
+#   mu = 1.0 eV   half-filling
+#   V  = 1.0 eV   impurity-bath hybridisation
+#   1 imp × 7 bath = 8 spatial orbitals → 16 qubits
+#   C(8,4)^2 = 4900 valid determinants in the (4α, 4β) sector
+#
+# Run with: q8020-sweep input/convergence-study.toml
+
+[global]
+_output_dir = "~/output"
+_script = "python src/run-skqd.py"
+_inject_outdir = "--output-dir"
+
+# System size: 1 impurity orbital, 7 bath sites
+"--num-imp-orbs" = 1
+"--num-bath-per-imp" = 7
+"--krylov-dim" = 4
+"--dt-mult" = 1.0
+"--opt-level" = 1
+# AIM parameters
+"--onsite" = 2.0
+"--mu" = 1.0
+"--hybridization" = 1.0
+# SQD post-processing — enough iterations to see convergence
+"--max-iter" = 15
+"--num-batches" = 5
+"--samples-per-batch" = 500
+# Backend
+"--backend-type" = "sim"
+"--coupling-map" = "default"
+# Post-sweep convergence plot
+_final_postproc = ["python src/plot_convergence.py"]
+
+[statevector]
+# Exact statevector baseline (shots=0)
+"--shots" = 0
+
+[low_shots]
+# Starved sampling — should show slow/incomplete convergence
+"--shots" = [500, 1000]
+
+[mid_shots]
+# Moderate sampling
+"--shots" = 5000
+
+[high_shots]
+# Generous sampling — should converge fast
+"--shots" = 50000

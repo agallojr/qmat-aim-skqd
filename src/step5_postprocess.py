@@ -23,35 +23,24 @@ def counts_to_bitarray(counts: dict, num_qubits: int, reverse: bool = False) -> 
     Returns:
         BitArray suitable for classically_diagonalize()
     """
-    # Expand counts into individual samples
     samples_list = []
     for bitstring, count in counts.items():
-        # Convert bitstring to integer array
-        # Qiskit returns bitstrings in little-endian (qubit 0 is rightmost)
         if reverse:
-            bits = np.array([int(b) for b in reversed(bitstring)], dtype=np.uint8)
+            bits = np.array([int(b) for b in reversed(bitstring)], dtype=bool)
         else:
-            bits = np.array([int(b) for b in bitstring], dtype=np.uint8)
-        # Repeat for each count
+            bits = np.array([int(b) for b in bitstring], dtype=bool)
         for _ in range(count):
             samples_list.append(bits)
-    
-    # Stack into 2D array
-    samples = np.array(samples_list, dtype=np.uint8)
-    
-    # Pack bits into bytes for BitArray
-    packed = np.packbits(samples, axis=1, bitorder='big')
-    
-    return BitArray(packed, num_bits=num_qubits)
+
+    samples = np.array(samples_list, dtype=bool)
+    return BitArray.from_bool_array(samples)
 
 
 def postprocess(
     counts: dict,
     num_orbs: int,
-    hopping: float = 1.0,
-    onsite: float = 5.0,
-    hybridization: float = 1.0,
-    filling_factor: float = -0.5,
+    h1e: np.ndarray,
+    h2e: np.ndarray,
     energy_tol: float = 1e-4,
     occupancies_tol: float = 1e-3,
     max_iterations: int = 10,
@@ -60,16 +49,15 @@ def postprocess(
     max_cycle: int = 200,
     symmetrize_spin: bool = True,
     carryover_threshold: float = 1e-5,
+    **_kwargs,
 ) -> list[float]:
     """Post-process bitstring counts to compute ground state energy.
     
     Args:
         counts: Dictionary of bitstring -> count from execution
         num_orbs: Number of spatial orbitals
-        hopping: Hopping parameter
-        onsite: Onsite energy (U)
-        hybridization: Hybridization strength
-        filling_factor: Multiplier for chemical potential
+        h1e: One-body Hamiltonian
+        h2e: Two-body Hamiltonian
         energy_tol: Energy convergence tolerance
         occupancies_tol: Occupancy convergence tolerance
         max_iterations: Maximum SQD iterations
@@ -83,26 +71,21 @@ def postprocess(
         List of energies per iteration (final energy is result[-1])
     """
     num_qubits = 2 * num_orbs
-    chemical_potential = filling_factor * onsite
     
     # Convert counts to BitArray
     print(f"Converting {len(counts)} unique bitstrings to BitArray...")
     bit_array = counts_to_bitarray(counts, num_qubits)
     print(f"BitArray: shape={bit_array.array.shape}, num_bits={bit_array.num_bits}")
     
-    # Build SIAM Hamiltonian in site basis
-    print("Building SIAM Hamiltonian (site basis)...")
-    hcore, eri = skqd_helpers.siam_hamiltonian(
-        num_orbs, hopping, onsite, hybridization, chemical_potential
-    )
+    print(f"Using Hamiltonian ({num_orbs} orbs)...")
     
     # Run classical diagonalization
     print(f"Starting SQD diagonalization (max_iter={max_iterations}, "
           f"batches={num_batches}, samples={samples_per_batch})...")
     result = skqd_helpers.classically_diagonalize(
         bit_array=bit_array,
-        hcore=hcore,
-        eri=eri,
+        hcore=h1e,
+        eri=h2e,
         num_orbitals=num_orbs,
         nelec=num_orbs,
         energy_tol=energy_tol,
@@ -142,34 +125,28 @@ def exact_siam_energy(
 
 def run_step5(
     counts: dict,
-    num_orbs: int = 10,
-    **kwargs
+    num_orbs: int,
+    h1e: np.ndarray,
+    h2e: np.ndarray,
+    **kwargs,
 ) -> list[float]:
     """Run step 5: SQD post-processing.
     
     Args:
         counts: Bitstring counts from step 4
         num_orbs: Number of orbitals
+        h1e: One-body Hamiltonian
+        h2e: Two-body Hamiltonian
         **kwargs: Additional arguments passed to postprocess()
         
     Returns:
         List of energies per iteration
     """
-    # Extract Hamiltonian params
-    hopping = kwargs.get('hopping', 1.0)
-    onsite = kwargs.get('onsite', 5.0)
-    hybridization = kwargs.get('hybridization', 1.0)
-    filling_factor = kwargs.get('filling_factor', -0.5)
-    chemical_potential = filling_factor * onsite
+    result = postprocess(counts, num_orbs, h1e=h1e, h2e=h2e, **kwargs)
     
-    result = postprocess(counts, num_orbs, **kwargs)
-    
-    # Compute exact energy for comparison (in site basis)
+    # Compute exact energy for comparison
     print("\nComputing exact ground state energy (FCI)...")
-    hcore, eri = skqd_helpers.siam_hamiltonian(
-        num_orbs, hopping, onsite, hybridization, chemical_potential
-    )
-    exact_energy = exact_siam_energy(hcore, eri, num_orbs)
+    exact_energy = exact_siam_energy(h1e, h2e, num_orbs)
     
     sqd_energy = result[-1]
     error = abs(sqd_energy - exact_energy)
@@ -216,15 +193,17 @@ def main():
     with open(counts_path, 'r', encoding='utf-8') as f:
         counts = json.load(f)
     
+    # Load Hamiltonian from saved arrays
+    h1e = np.load(case_dir / 'h1e.npy')
+    h2e = np.load(case_dir / 'h2e.npy')
+    num_orbs = h1e.shape[0]
+
     # Run postprocessing
-    num_orbs = case_info['num_orbs']
     result = run_step5(
         counts,
         num_orbs=num_orbs,
-        hopping=case_info.get('hopping', 1.0),
-        onsite=case_info.get('onsite', 5.0),
-        hybridization=case_info.get('hybridization', 1.0),
-        filling_factor=case_info.get('filling_factor', -0.5),
+        h1e=h1e,
+        h2e=h2e,
         max_iterations=case_info.get('max_iter', 10),
         num_batches=case_info.get('num_batches', 5),
         samples_per_batch=case_info.get('samples_per_batch', 200),

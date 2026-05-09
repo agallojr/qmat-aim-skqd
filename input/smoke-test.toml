@@ -1,25 +1,45 @@
-# SKQD Smoke Test - Minimal configuration for quick testing
-# Run with: python run-study-skqd.py input/smoke-test.toml
+# SKQD Smoke Test — single-orbital AIM for Co 3d in bulk Cu
+#
+# Physical system: one Co 3d impurity orbital hybridised with a
+# discretised Cu conduction band (3 bath sites from DMFT bath fit).
+#   U  = 4.0 eV   screened Coulomb repulsion on the 3d orbital
+#   mu = 2.0 eV   chemical potential (half-filling, particle-hole symmetric)
+#   V  = 0.8 eV   impurity-bath hybridisation
+#
+# Star geometry: impurity couples uniformly to all bath sites.
+# 1 imp × 3 bath = 4 spatial orbitals → 8 qubits.
+#
+# Run with: q8020-sweep input/smoke-test.toml
 
 [global]
-# Output directory for study results
-output_dir = "~/output"
+_output_dir = "~/output"
+_script = "python src/run-skqd.py"
+_inject_outdir = "--output-dir"
 
-# Minimal parameters for fast execution
-num_orbs = 4
-krylov_dim = 2
-dt_mult = 1.0
-shots = 256
-opt_level = 1
-# Hamiltonian parameters
-hopping = 1.0
-onsite = 5.0
-hybridization = 1.0
-filling_factor = -0.5
-# SQD post-processing parameters
-max_iter = 3
-num_batches = 2
-samples_per_batch = 50
+# System size: 1 impurity orbital, 3 bath sites each
+"--num-imp-orbs" = 1
+"--num-bath-per-imp" = 3
+"--krylov-dim" = 3
+"--dt-mult" = 1.0
+"--opt-level" = 1
+# Co 3d in Cu: U=4 eV, mu=U/2, V=0.8 eV
+"--onsite" = 4.0
+"--mu" = 2.0
+"--hybridization" = 0.8
+# SQD post-processing
+"--max-iter" = 5
+"--num-batches" = 3
+"--samples-per-batch" = 100
+# Backend
+"--backend-type" = "sim"
+"--coupling-map" = "default"
+# Post-sweep convergence plot
+_final_postproc = ["python src/plot_convergence.py"]
 
-[smoke]
-noise = 0.01
+[statevector]
+# Exact statevector — no shot noise (shots=0)
+"--shots" = 0
+
+[sampled]
+# Shot-based execution with finite sampling noise
+"--shots" = [1024, 4096]

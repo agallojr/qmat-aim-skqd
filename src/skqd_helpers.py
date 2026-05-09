@@ -74,40 +74,142 @@ def dt_from_spectral_norm(H_spo: SparsePauliOp) -> float:
 
 
 def siam_hamiltonian(
-    num_orbs: int,
-    hopping: float,
+    num_baths: int,
     onsite: float,
-    hybridization: float,
     chemical_potential: float,
+    hybridization: float,
 ) -> tuple[np.ndarray, np.ndarray]:
-    """Hamiltonian for the single-impurity Anderson model.
+    """Hamiltonian for the single-impurity Anderson model (star geometry).
+
+    Impurity at site 0 couples to every bath site with the same
+    hybridization V.  No bath-bath hopping.  Matches the
+    parameterization used by qc-dft-dmft: ``aim_hamiltonian(U, mu, V, num_baths)``.
 
     Args:
-        num_orbs: Number of spatial orbitals
-        hopping: Hopping term
-        onsite: On-site repulsion
-        hybrid: Hybridization interaction
-        mu: Chemical potential
+        num_baths: Number of bath sites (num_orbs = num_baths + 1)
+        onsite: On-site Coulomb repulsion U on impurity
+        chemical_potential: Chemical potential mu on impurity
+        hybridization: Impurity-bath coupling V (uniform)
 
     Returns:
-        One- and two-body terms of Hamiltonian.
+        One- and two-body terms of Hamiltonian (h1e, h2e) with
+        num_orbs = num_baths + 1.
     """
-    # Place the impurity on the first site
+    num_orbs = num_baths + 1
     impurity_orb = 0
 
-    # One body matrix elements in the "position" basis
+    # One-body: impurity chemical potential + impurity-bath hybridization
     h1e = np.zeros((num_orbs, num_orbs))
-    np.fill_diagonal(h1e[:, 1:], -hopping)
-    np.fill_diagonal(h1e[1:, :], -hopping)
-    h1e[impurity_orb, impurity_orb + 1] = -hybridization
-    h1e[impurity_orb + 1, impurity_orb] = -hybridization
     h1e[impurity_orb, impurity_orb] = chemical_potential
+    for b in range(1, num_orbs):
+        h1e[impurity_orb, b] = -hybridization
+        h1e[b, impurity_orb] = -hybridization
 
-    # Two body matrix elements in the "position" basis
+    # Two-body: on-site U on impurity only
     h2e = np.zeros((num_orbs, num_orbs, num_orbs, num_orbs))
     h2e[impurity_orb, impurity_orb, impurity_orb, impurity_orb] = onsite
 
     return h1e, h2e
+
+
+def multi_orbital_aim_hamiltonian(
+    num_imp_orbs: int,
+    num_bath_per_imp: int,
+    U: float,
+    U_prime: float,
+    J_H: float,
+    mu: float,
+    hybridization: float | list[float],
+    crystal_field: list[float] | None = None,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Multi-orbital Anderson impurity model Hamiltonian (star geometry).
+
+    Models *num_imp_orbs* correlated impurity orbitals (e.g. f-shell), each
+    coupled to its own set of *num_bath_per_imp* bath orbitals.  Includes
+    intra-orbital U, inter-orbital U', Hund's coupling J_H, crystal-field
+    splitting, and per-orbital hybridization to bath.
+
+    Orbital ordering (spatial): imp_0, imp_1, ..., imp_{M-1},
+        bath_0_0, ..., bath_0_{B-1}, bath_1_0, ..., bath_{M-1}_{B-1}
+
+    Total spatial orbitals = M + M*B = M*(1+B).
+    Total qubits = 2 * M * (1 + B).
+
+    Two-body integrals use physicist (chemist-1) convention:
+        h2e[p,q,r,s] corresponds to 1/2 * a†_p a†_r a_s a_q  (physicists')
+
+    Args:
+        num_imp_orbs: Number of impurity (correlated) orbitals M
+        num_bath_per_imp: Number of bath sites per impurity orbital B
+        U: Intra-orbital Coulomb repulsion (same orbital, opposite spin)
+        U_prime: Inter-orbital Coulomb repulsion (different orbitals)
+        J_H: Hund's exchange coupling
+        mu: Chemical potential (applied to all impurity orbitals)
+        hybridization: Impurity-bath coupling V.  Scalar (uniform) or list
+            of length M (per-orbital).
+        crystal_field: Crystal-field energies for each impurity orbital.
+            List of length M.  Defaults to zero (degenerate).
+
+    Returns:
+        (h1e, h2e) with shape (num_orbs, num_orbs) and
+        (num_orbs, num_orbs, num_orbs, num_orbs).
+    """
+    M = num_imp_orbs
+    B = num_bath_per_imp
+    num_orbs = M * (1 + B)
+
+    # Broadcast hybridization
+    if isinstance(hybridization, (int, float)):
+        V = [float(hybridization)] * M
+    else:
+        V = list(hybridization)
+        assert len(V) == M
+
+    # Crystal field
+    if crystal_field is None:
+        cf = [0.0] * M
+    else:
+        cf = list(crystal_field)
+        assert len(cf) == M
+
+    # --- One-body terms ---
+    h1e = np.zeros((num_orbs, num_orbs))
+
+    # Impurity on-site: crystal field - mu
+    for m in range(M):
+        h1e[m, m] = cf[m] - mu
+
+    # Impurity-bath hybridization
+    for m in range(M):
+        for b in range(B):
+            bath_idx = M + m * B + b
+            h1e[m, bath_idx] = -V[m]
+            h1e[bath_idx, m] = -V[m]
+
+    # --- Two-body terms (physicists' notation) ---
+    h2e = np.zeros((num_orbs, num_orbs, num_orbs, num_orbs))
+
+    for m in range(M):
+        # Intra-orbital Coulomb: U * n_m↑ n_m↓
+        # In spatial orbital basis: h2e[m,m,m,m] = U
+        h2e[m, m, m, m] = U
+
+    for m in range(M):
+        for mp in range(M):
+            if m == mp:
+                continue
+            # Inter-orbital Coulomb: U' * n_m n_m'
+            # n_m n_m' = (n_m↑ + n_m↓)(n_m'↑ + n_m'↓)
+            # Contributes: h2e[m,m,m',m'] = U' (density-density)
+            h2e[m, m, mp, mp] += U_prime
+
+            # Hund's exchange: -J_H * (spin-flip + pair-hopping)
+            # Spin-flip: -J_H * c†_m↑ c_m↓ c†_m'↓ c_m'↑
+            #   → h2e[m, m', m', m] = -J_H  (exchange integral)
+            h2e[m, mp, mp, m] += -J_H
+
+    return h1e, h2e
+
 
 def _canonicalize_real_eigvec_signs(V: np.ndarray, anchor_row: int = 0) -> np.ndarray:
     V = V.copy()

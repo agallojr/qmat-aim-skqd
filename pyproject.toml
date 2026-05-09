@@ -24,6 +24,7 @@ dependencies = [
     "toml",
     "ffsim",
     "q8020-cfd-metautil",
+    "q8020-cfd-qutil",
 ]
 
 [tool.setuptools]
@@ -31,6 +32,7 @@ packages = {find = {where = ["src"]}}
 
 [tool.uv.sources]
 q8020-cfd-metautil = { path = "../q8020/q8020-cfd-metautil", editable = true }
+q8020-cfd-qutil = { path = "../q8020/q8020-cfd-qutil", editable = true }
 
 
 [tool.black]
