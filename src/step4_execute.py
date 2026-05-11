@@ -34,6 +34,7 @@ def _statevector_counts(
     for qc in circuits:
         # Remove measurements so Statevector can evaluate
         bare = qc.remove_final_measurements(inplace=False)
+        assert bare is not None  # inplace=False always returns a new circuit
         sv = Statevector(bare)
         probs = sv.probabilities()
         num_qubits = qc.num_qubits

@@ -1,0 +1,69 @@
+# Ce 4f^1 — proper atomic filling.
+#
+# Cerium has one 4f electron. The existing ce-4f-stretch.toml ran a
+# half-filled (5 alpha + 5 beta on 10 orbitals) Hubbard-like configuration,
+# not atomic Ce. This case sets n_alpha=1, n_beta=0: a single 4f electron,
+# no bath occupancy at start. Exercises the --n-electrons-* flags.
+#
+# Geometry: 5 impurity orbitals (J=5/2 multiplet, one Kramers doublet
+# frozen out) + 1 bath site each = 10 spatial orbitals = 20 qubits.
+# Sector dim = C(10,1) * C(10,0) = 10 (small — SQD subspace is trivial,
+# but the 20-qubit Trotter circuit still exercises the full pipeline).
+#
+# Kanamori parameters: same as ce-4f-stretch (atomic-physics scale).
+#   U   = 6.0 eV   intra-orbital Coulomb (4f-4f)
+#   U'  = 4.6 eV   inter-orbital (= U - 2 J_H)
+#   J_H = 0.7 eV   Hund's exchange
+#   mu  = 3.0 eV   chemical potential (impurity sits ~3 eV below E_F)
+#   V   = 0.4 eV   4f-conduction hybridization
+#
+# Crystal field: cubic + trigonal CEF splitting across 5 orbitals
+#   eps = [-0.15, -0.05, 0.0, 0.05, 0.15] eV
+#
+# Expected: ground state is the lowest CF-split orbital with one
+# electron, weakly hybridized to its bath site. FCI will be near
+# eps_min - mu = -3.15 eV in the V->0 limit; finite V renormalizes.
+#
+# Run with: q8020-sweep input/ce-4f1.toml
+
+[global]
+_output_dir = "~/output"
+_script = "python src/run-skqd.py"
+_inject_outdir = "--output-dir"
+
+"--system-label" = "Ce 4f^1"
+"--num-imp-orbs" = 5
+"--num-bath-per-imp" = 1
+# Atomic filling — one 4f electron, spin-up (S=1/2)
+"--n-electrons-alpha" = 1
+"--n-electrons-beta" = 0
+# Kanamori interactions
+"--onsite" = 6.0
+"--U-prime" = 4.6
+"--J-H" = 0.7
+"--mu" = 3.0
+"--hybridization" = 0.4
+"--crystal-field" = "-0.15,-0.05,0.0,0.05,0.15"
+# Krylov / circuit params
+"--dt-mult" = 1.0
+"--opt-level" = 1
+# Trotter — second-order Strang is plenty for a 1-electron sector
+"--trotter-order" = 2
+"--trotter-substeps" = 1
+# SQD post-processing — sector is small so a modest budget suffices
+"--max-iter" = 20
+"--num-batches" = 5
+"--samples-per-batch" = 200
+# Backend
+"--backend-type" = "sim"
+"--coupling-map" = "default"
+_final_postproc = ["python src/plot_convergence.py"]
+
+
+[k4]
+"--krylov-dim" = 4
+"--shots" = [16384, 65536]
+
+[k6]
+"--krylov-dim" = 6
+"--shots" = [16384, 65536]

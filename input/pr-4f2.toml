@@ -1,0 +1,85 @@
+# Pr 4f^2 — Hund's-rule ground state (^3H_4 manifold).
+#
+# Praseodymium has two 4f electrons. Hund's first rule (maximize S) places
+# both electrons spin-up, occupying two different orbitals: S=1, L=5, J=4.
+# This is the textbook test of Hund's-coupling physics on a multi-orbital
+# AIM and exercises the J_H spin-flip + pair-hopping Trotter pieces in a
+# regime where they actually matter (Ce 4f^1 has nothing to exchange with).
+#
+# Geometry: 5 imp orbitals (J=5/2 reduced) + 1 bath each = 10 spatial = 20q.
+# Sector dim = C(10,2) * C(10,0) = 45 (high-spin sector, both electrons up).
+#
+# Kanamori parameters: Pr 4f is slightly more contracted than Ce 4f, so U
+# is a touch larger; J_H comparable.
+#   U   = 6.5 eV
+#   U'  = 5.0 eV   (= U - 2 J_H ~ 6.5 - 1.5 = 5.0)
+#   J_H = 0.75 eV
+#   mu  = 3.0 eV
+#   V   = 0.3 eV   (Pr more localized than Ce)
+#
+# Crystal field: same scale as Ce — fine for a Hund-physics test.
+#   eps = [-0.15, -0.05, 0.0, 0.05, 0.15] eV
+#
+# Validation expectation: in the V->0 atomic limit, the ^3H ground state
+# energy is E_atomic = 2*eps_min + 2*eps_2nd_min + (U' - J_H) - 2*mu.
+# Plug in (U' - J_H) = 4.25 eV, eps_min + eps_2nd_min = -0.20 eV:
+#   E_atomic = -0.20 + 4.25 - 6.0 = -1.95 eV (V=0 reference).
+# The actual FCI with V=0.3 will sit lower by O(V^2/Delta) per orbital.
+# Sweep should converge to the FCI value within a few k.
+#
+# This case is the headline f-orbital demonstration: same geometry as
+# ce-4f1 but with a non-trivial multi-electron Hund's-rule sector, so any
+# regression in _hund_offdiag_op or _emit_diag will show up here.
+#
+# Run with: q8020-sweep input/pr-4f2.toml
+
+[global]
+_output_dir = "~/output"
+_script = "python src/run-skqd.py"
+_inject_outdir = "--output-dir"
+
+"--system-label" = "Pr 4f^2"
+"--num-imp-orbs" = 5
+"--num-bath-per-imp" = 1
+# Hund's high-spin: 2 electrons, both spin-up (S=1)
+"--n-electrons-alpha" = 2
+"--n-electrons-beta" = 0
+# Kanamori interactions — Pr atomic-physics scale
+"--onsite" = 6.5
+"--U-prime" = 5.0
+"--J-H" = 0.75
+"--mu" = 3.0
+"--hybridization" = 0.3
+"--crystal-field" = "-0.15,-0.05,0.0,0.05,0.15"
+# Krylov / circuit params
+"--dt-mult" = 1.0
+"--opt-level" = 1
+# Trotter — order-2 Strang; sweep substeps to confirm Hund convergence
+"--trotter-order" = 2
+"--trotter-substeps" = 1
+# SQD post-processing
+"--max-iter" = 30
+"--num-batches" = 10
+"--samples-per-batch" = 400
+# Backend
+"--backend-type" = "sim"
+"--coupling-map" = "default"
+_final_postproc = ["python src/plot_convergence.py"]
+
+
+[k4]
+"--krylov-dim" = 4
+"--shots" = [16384, 65536, 262144]
+
+[k6]
+"--krylov-dim" = 6
+"--shots" = [16384, 65536, 262144]
+
+# Also probe spin-singlet sector (n_alpha=1, n_beta=1) to confirm the
+# high-spin (S=1) state is energetically below the singlet (S=0) — i.e.
+# the Hund's-rule ordering is reproduced.
+[singlet_check]
+"--n-electrons-alpha" = 1
+"--n-electrons-beta" = 1
+"--krylov-dim" = 6
+"--shots" = 65536

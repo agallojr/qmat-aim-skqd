@@ -1,0 +1,54 @@
+# Ce-like system — 20 qubits with 4 electrons (Hilbert dim ~ C(10,4)^2 ≈ 6000).
+#
+# Same geometry as ce-4f1-20q (2 imp × 4 bath = 10 orbitals = 20 qubits)
+# but with 4 electrons total (2 alpha, 2 beta) to create a large, interesting
+# subspace for SQD to explore with clear convergence progression.
+#
+# Kanamori parameters: same as Ce (atomic-physics scale).
+
+[global]
+_output_dir = "~/output"
+_script = "python src/run-skqd.py"
+_inject_outdir = "--output-dir"
+
+"--system-label" = "4e model (20q, large subspace)"
+"--num-imp-orbs" = 2
+"--num-bath-per-imp" = 4
+# 4 electrons: 2 alpha + 2 beta (large sector for SQD to explore)
+"--n-electrons-alpha" = 2
+"--n-electrons-beta" = 2
+# Kanamori interactions
+"--onsite" = 6.0
+"--U-prime" = 4.6
+"--J-H" = 0.7
+"--mu" = 3.0
+"--hybridization" = 0.4
+# Bath structure
+"--bath-energies" = "-2.0,-1.0,0.0,1.0,-2.0,-1.0,0.0,1.0"
+"--bath-couplings" = "0.4,0.4,0.4,0.4,0.4,0.4,0.4,0.4"
+# Krylov / circuit params
+"--dt-mult" = 1.0
+"--opt-level" = 1
+"--trotter-order" = 2
+"--trotter-substeps" = 1
+# SQD post-processing — explore convergence with iterations
+"--max-iter" = 30
+"--num-batches" = 8
+"--samples-per-batch" = 300
+# Backend
+"--backend-type" = "sim"
+"--coupling-map" = "default"
+_final_postproc = ["python src/plot_convergence.py"]
+
+
+[k4]
+"--krylov-dim" = 4
+"--shots" = [8192, 16384, 65536]
+
+[k6]
+"--krylov-dim" = 6
+"--shots" = [8192, 16384, 65536]
+
+[k8]
+"--krylov-dim" = 8
+"--shots" = [16384, 65536]

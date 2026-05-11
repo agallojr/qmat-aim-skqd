@@ -49,6 +49,8 @@ def postprocess(
     max_cycle: int = 200,
     symmetrize_spin: bool = True,
     carryover_threshold: float = 1e-5,
+    n_alpha: int | None = None,
+    n_beta: int | None = None,
     **_kwargs,
 ) -> list[float]:
     """Post-process bitstring counts to compute ground state energy.
@@ -71,14 +73,29 @@ def postprocess(
         List of energies per iteration (final energy is result[-1])
     """
     num_qubits = 2 * num_orbs
-    
+
+    # Resolve filling: default to half-filling (preserves legacy behavior).
+    if n_alpha is None:
+        n_alpha = num_orbs // 2
+    if n_beta is None:
+        n_beta = num_orbs // 2
+
+    # qiskit-addon-sqd rejects symmetrize_spin when n_alpha != n_beta
+    # (the symmetrization swaps alpha/beta bitmasks which is invalid off Sz=0).
+    if n_alpha != n_beta and symmetrize_spin:
+        print(
+            f"Disabling symmetrize_spin: nelec=({n_alpha}, {n_beta}) is "
+            f"off Sz=0."
+        )
+        symmetrize_spin = False
+
     # Convert counts to BitArray
     print(f"Converting {len(counts)} unique bitstrings to BitArray...")
     bit_array = counts_to_bitarray(counts, num_qubits)
     print(f"BitArray: shape={bit_array.array.shape}, num_bits={bit_array.num_bits}")
-    
-    print(f"Using Hamiltonian ({num_orbs} orbs)...")
-    
+
+    print(f"Using Hamiltonian ({num_orbs} orbs, nelec=({n_alpha}, {n_beta}))...")
+
     # Run classical diagonalization
     print(f"Starting SQD diagonalization (max_iter={max_iterations}, "
           f"batches={num_batches}, samples={samples_per_batch})...")
@@ -87,7 +104,8 @@ def postprocess(
         hcore=h1e,
         eri=h2e,
         num_orbitals=num_orbs,
-        nelec=num_orbs,
+        num_elec_a=n_alpha,
+        num_elec_b=n_beta,
         energy_tol=energy_tol,
         occupancies_tol=occupancies_tol,
         max_iterations=max_iterations,
@@ -96,9 +114,9 @@ def postprocess(
         symmetrize_spin=symmetrize_spin,
         carryover_threshold=carryover_threshold,
         max_cycle=max_cycle,
-        local=True
+        local=True,
     )
-    
+    assert result is not None  # local mode always returns a list[float]
     return result
 
 
@@ -106,20 +124,31 @@ def exact_siam_energy(
     hcore: np.ndarray,
     eri: np.ndarray,
     num_orbs: int,
+    n_alpha: int | None = None,
+    n_beta: int | None = None,
 ) -> float:
     """Compute exact ground state energy for SIAM using FCI.
-    
+
     Args:
         hcore: One-body Hamiltonian
         eri: Two-body electron repulsion integrals
         num_orbs: Number of spatial orbitals
-        
+        n_alpha: Number of spin-up electrons (default num_orbs // 2)
+        n_beta: Number of spin-down electrons (default num_orbs // 2)
+
     Returns:
         Exact ground state energy
     """
     from pyscf import fci
-    nelec = num_orbs  # Half-filled
-    exact_energy, _ = fci.direct_spin1.kernel(hcore, eri, num_orbs, (nelec // 2, nelec // 2))
+    if n_alpha is None:
+        n_alpha = num_orbs // 2
+    if n_beta is None:
+        n_beta = num_orbs // 2
+    if n_alpha + n_beta == 0:
+        return 0.0
+    exact_energy, _ = fci.direct_spin1.kernel(
+        hcore, eri, num_orbs, (int(n_alpha), int(n_beta))
+    )
     return exact_energy
 
 
@@ -131,22 +160,27 @@ def run_step5(
     **kwargs,
 ) -> list[float]:
     """Run step 5: SQD post-processing.
-    
+
     Args:
         counts: Bitstring counts from step 4
         num_orbs: Number of orbitals
         h1e: One-body Hamiltonian
         h2e: Two-body Hamiltonian
-        **kwargs: Additional arguments passed to postprocess()
-        
+        **kwargs: Additional arguments passed to postprocess() — including
+            n_alpha, n_beta for Sz-resolved filling.
+
     Returns:
         List of energies per iteration
     """
     result = postprocess(counts, num_orbs, h1e=h1e, h2e=h2e, **kwargs)
-    
+
     # Compute exact energy for comparison
     print("\nComputing exact ground state energy (FCI)...")
-    exact_energy = exact_siam_energy(h1e, h2e, num_orbs)
+    exact_energy = exact_siam_energy(
+        h1e, h2e, num_orbs,
+        n_alpha=kwargs.get('n_alpha'),
+        n_beta=kwargs.get('n_beta'),
+    )
     
     sqd_energy = result[-1]
     error = abs(sqd_energy - exact_energy)
@@ -207,6 +241,8 @@ def main():
         max_iterations=case_info.get('max_iter', 10),
         num_batches=case_info.get('num_batches', 5),
         samples_per_batch=case_info.get('samples_per_batch', 200),
+        n_alpha=case_info.get('nelec_alpha'),
+        n_beta=case_info.get('nelec_beta'),
     )
     
     # Save outputs

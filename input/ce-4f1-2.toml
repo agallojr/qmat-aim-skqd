@@ -1,0 +1,61 @@
+# Ce 4f^1 — 20 qubits with moderate bath richness (2 imp × 4 bath).
+#
+# Geometry: 2 impurity orbitals + 4 bath sites each = 10 spatial orbitals = 20 qubits.
+# Sector dim = C(10,1) * C(10,0) = 10 (small but shows progress toward f-orbitals).
+#
+# Same Kanamori parameters as Ce 4f^1 (atomic-physics scale):
+#   U   = 6.0 eV   intra-orbital Coulomb
+#   U'  = 4.6 eV   inter-orbital (= U - 2 J_H)
+#   J_H = 0.7 eV   Hund's exchange
+#   mu  = 3.0 eV   chemical potential
+#   V   = 0.4 eV   imp-bath hybridization
+#
+# Run with: q8020-sweep input/ce-4f1-20q.toml
+
+[global]
+_output_dir = "~/output"
+_script = "python src/run-skqd.py"
+_inject_outdir = "--output-dir"
+
+"--system-label" = "Ce 4f^1 (20q)"
+"--num-imp-orbs" = 2
+"--num-bath-per-imp" = 4
+# Atomic filling — one 4f electron, spin-up (S=1/2)
+"--n-electrons-alpha" = 1
+"--n-electrons-beta" = 0
+# Kanamori interactions
+"--onsite" = 6.0
+"--U-prime" = 4.6
+"--J-H" = 0.7
+"--mu" = 3.0
+"--hybridization" = 0.4
+# Bath structure: 2 impurities × 4 bath sites each, row-major (m1b1,m1b2,m1b3,m1b4,m2b1,...)
+# Energies spaced to create distinct conduction channels
+"--bath-energies" = "-2.0,-1.0,0.0,1.0,-2.0,-1.0,0.0,1.0"
+"--bath-couplings" = "0.4,0.4,0.4,0.4,0.4,0.4,0.4,0.4"
+# Krylov / circuit params
+"--dt-mult" = 1.0
+"--opt-level" = 1
+"--trotter-order" = 2
+"--trotter-substeps" = 1
+# SQD post-processing — explore convergence with iterations
+"--max-iter" = 25
+"--num-batches" = 5
+"--samples-per-batch" = 200
+# Backend
+"--backend-type" = "sim"
+"--coupling-map" = "default"
+_final_postproc = ["python src/plot_convergence.py"]
+
+
+[k4]
+"--krylov-dim" = 4
+"--shots" = [8192, 16384, 65536]
+
+[k6]
+"--krylov-dim" = 6
+"--shots" = [8192, 16384, 65536]
+
+[k8]
+"--krylov-dim" = 8
+"--shots" = [16384, 65536]

@@ -1,0 +1,85 @@
+# Bath-richness regression test — proves --bath-energies / --bath-couplings
+# actually do something for B>1.
+#
+# Geometry: small (M=2 imp + 2 bath each = 6 spatial = 12 qubits, sector
+# C(6,2)^2 = 225) so each case runs in seconds. Designed as a fast
+# regression test for the per-bath fix, not as a physics demo.
+#
+# Three sweep groups, all M=2 B=2 with the same impurity Hamiltonian, only
+# the bath (epsilons, couplings) differs:
+#
+#   degenerate   : both bath sites at eps=0, V=0.4 (legacy behavior;
+#                  effectively B=1 because the two sites span the same
+#                  bonding combination — the antibonding bath orbital
+#                  decouples and is dead Hilbert-space weight).
+#
+#   distinct_eps : bath sites at eps=-1.0 and +1.0, both V=0.4 (the two
+#                  baths now span distinct single-particle channels).
+#
+#   distinct_v   : bath sites at eps=0,0 with V=0.5 and V=0.2 (different
+#                  hybridization strengths; should reduce to an effective
+#                  B=1 case with V_eff = sqrt(0.5^2 + 0.2^2) = 0.539).
+#
+# Acceptance:
+#   E(degenerate)   == E of the same case with --num-bath-per-imp=1
+#                      and --hybridization=0.4 * sqrt(2) (bonding combo)
+#   E(distinct_eps) != E(degenerate) by O(V^2 / Delta_eps) — confirms
+#                      bath energies actually flow through to h1e diagonal
+#   E(distinct_v)   == E(B=1, V=sqrt(0.5^2+0.2^2)) — confirms couplings
+#                      actually flow through to h1e off-diagonal
+#
+# If any of those equalities is broken, the per-bath plumbing is wrong.
+#
+# Run with: q8020-sweep input/bath-richness-test.toml
+
+[global]
+_output_dir = "~/output"
+_script = "python src/run-skqd.py"
+_inject_outdir = "--output-dir"
+
+"--system-label" = "bath-richness"
+"--num-imp-orbs" = 2
+"--num-bath-per-imp" = 2
+# Half-filled (2 alpha + 2 beta on 6 orbs)
+"--n-electrons-alpha" = 2
+"--n-electrons-beta" = 2
+# Modest Kanamori — physics is in the bath, not the interactions
+"--onsite" = 4.0
+"--U-prime" = 2.6
+"--J-H" = 0.7
+"--mu" = 2.0
+"--crystal-field" = "0.0,0.0"
+# Krylov / circuit
+"--dt-mult" = 1.0
+"--opt-level" = 1
+"--trotter-order" = 2
+"--trotter-substeps" = 1
+# SQD
+"--max-iter" = 20
+"--num-batches" = 5
+"--samples-per-batch" = 200
+"--krylov-dim" = 5
+"--shots" = 16384
+# Backend
+"--backend-type" = "sim"
+"--coupling-map" = "default"
+_final_postproc = ["python src/plot_convergence.py"]
+
+
+# Group 1: degenerate baths — should reproduce legacy B=1 effective physics.
+# Bath array layout is row-major over (m, b): (m=0,b=0),(m=0,b=1),(m=1,b=0),(m=1,b=1).
+[degenerate]
+"--bath-energies" = "0.0,0.0,0.0,0.0"
+"--bath-couplings" = "0.4,0.4,0.4,0.4"
+
+# Group 2: distinct bath energies — antibonding bath now decoupled from
+# bonding bath, so it carries actual extra single-particle weight.
+[distinct_eps]
+"--bath-energies" = "-1.0,1.0,-1.0,1.0"
+"--bath-couplings" = "0.4,0.4,0.4,0.4"
+
+# Group 3: distinct couplings — should reduce to an effective B=1 with
+# V_eff = sqrt(0.5^2 + 0.2^2) = 0.5385 per impurity.
+[distinct_v]
+"--bath-energies" = "0.0,0.0,0.0,0.0"
+"--bath-couplings" = "0.5,0.2,0.5,0.2"

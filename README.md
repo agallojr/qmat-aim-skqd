@@ -1,255 +1,258 @@
 # SKQD-AIM: Sample-based Krylov Quantum Diagonalization for Anderson Impurity Models
 
-Quantum-classical hybrid algorithm for computing ground state energies of Anderson Impurity Models (AIM) using Sample-based Krylov Quantum Diagonalization (SKQD).  Supports single-orbital and multi-orbital impurities with Kanamori interactions (U, U′, J_H), crystal-field splitting, and per-orbital bath hybridization.
+Quantum-classical hybrid solver for ground-state energies of the multi-orbital Anderson Impurity Model with rotationally-invariant Kanamori interactions. The quantum side prepares Krylov-evolved states and samples bitstrings; the classical side diagonalizes the Hamiltonian projected onto the sampled subspace (SCI). Implemented on top of [qiskit-addon-sqd](https://github.com/Qiskit/qiskit-addon-sqd) and [ffsim](https://github.com/qiskit-community/ffsim), with [PySCF](https://pyscf.org) used for FCI reference energies.
 
-## Overview
+---
 
-### Sample-based Quantum Diagonalization (SQD)
+## Physics scope
 
-Traditional variational quantum eigensolvers (VQE) estimate ground state energies by measuring expectation values of the Hamiltonian, which requires many circuit executions and is sensitive to noise. **Sample-based Quantum Diagonalization (SQD)** takes a different approach:
+### What this code computes
 
-1. **Sample bitstrings** from a quantum circuit that prepares a state with significant overlap with the ground state
-2. **Build a subspace** from the sampled computational basis states
-3. **Classically diagonalize** the Hamiltonian within this subspace
+For a cluster of `M` correlated impurity orbitals and `M·B` bath orbitals (star geometry — every bath site couples directly to its impurity orbital, no bath-bath hopping), the code builds the second-quantized Hamiltonian
 
-The key insight is that if the ground state has support on a relatively small number of computational basis states, we can identify those states through sampling and then solve the eigenvalue problem classically. This is particularly effective for:
-- States with sparse structure in the computational basis
-- Problems where noise corrupts expectation values but not the identity of sampled states
-- Systems where classical diagonalization in the sampled subspace is tractable
+```
+H = H_1 + H_imp_int
 
-### Krylov Subspace Enhancement (SKQD)
+H_1   = Σ_{pq, σ}  h1e[p, q]  c†_{pσ} c_{qσ}        (one-body: ε_imp + crystal field, μ, V_{m,b})
+H_int = U   Σ_m   n_{m↑} n_{m↓}                      (intra-orbital Coulomb)
+      + U′  Σ_{m<m'}  Σ_{σσ'}  n_{mσ} n_{m'σ'}       (inter-orbital, σ ≠ σ')
+      + (U′ − J_H) Σ_{m<m', σ}  n_{mσ} n_{m'σ}       (inter-orbital, σ = σ')
+      − J_H Σ_{m≠m'} (c†_{m↑} c_{m↓} c†_{m'↓} c_{m'↑}   spin-flip
+                    + c†_{m↑} c†_{m↓} c_{m'↓} c_{m'↑})  pair-hopping
+```
 
-**SKQD** enhances SQD by using Krylov subspace methods to generate the quantum states for sampling. Instead of a single variational ansatz, SKQD:
+This is the standard rotationally-invariant Kanamori parameterization. It is exact for two-orbital problems and is the standard cubic-symmetry approximation for t₂g / e_g subspaces of d-shells. For a full f-shell it captures Hund's-rule ordering correctly (validated on Pr 4f² ³H vs ¹G sectors) but does not reproduce Slater–Condon multiplet splittings — see *Limitations* below.
 
-1. Prepares an initial reference state |ψ₀⟩
-2. Applies powers of the time evolution operator e^{-iHt} to generate Krylov basis states: |ψ₀⟩, e^{-iHt}|ψ₀⟩, e^{-2iHt}|ψ₀⟩, ...
-3. Samples bitstrings from each Krylov state
-4. Combines all samples to build a richer subspace for classical diagonalization
+The two-electron tensor is assembled in chemist-ERI convention with explicit 8-fold permutation symmetrization, then handed to ffsim's `MolecularHamiltonian` (Jordan–Wigner mapping) for circuit construction and to PySCF FCI for the reference energy. **Both consumers see the same h2e.** Numerical agreement of ffsim and PySCF FCI on small cases is the primary correctness check.
 
-The Krylov approach systematically explores the relevant Hilbert space and often captures ground state components more effectively than a single ansatz.
+### What you control (chemist-facing)
 
-### Application to the Anderson Impurity Model
+| Quantity | Symbol | CLI | Notes |
+|---|---|---|---|
+| Impurity orbital count | M | `--num-imp-orbs` | Active correlated orbitals; user chooses the basis (spherical, cubic, real-CF, etc.) |
+| Bath sites per impurity | B | `--num-bath-per-imp` | Star geometry; bath sites of impurity m are independent |
+| Intra-orbital Coulomb | U | `--onsite` (eV) | |
+| Inter-orbital Coulomb | U′ | `--U-prime` (eV) | Defaults to `U − 2·J_H` (rotationally-invariant relation) |
+| Hund's exchange | J_H | `--J-H` (eV) | |
+| Chemical potential | μ | `--mu` (eV) | Subtracted from every diagonal h1e entry |
+| Crystal-field eigenvalues | ε_CF | `--crystal-field` (eV, comma-sep, length M) | Diagonal one-body splitting in the chosen orbital basis |
+| Bath energies | ε_p | `--bath-energies` (eV, comma-sep, length M·B) | Per-bath-site, row-major over (m, b) |
+| Hybridization | V_p | `--bath-couplings` (eV, comma-sep, length M·B) | Per-bath-site. `--hybridization` is a scalar shortcut that broadcasts |
+| Particle sector | (n↑, n↓) | `--n-electrons-alpha`, `--n-electrons-beta` | Hard-sets the (Nα, Nβ) sector of the FCI / SCI solve. Defaults to half-filling |
 
-The **Anderson Impurity Model** describes correlated impurity orbitals coupled to a bath of conduction electrons. It is a fundamental model in condensed matter physics for understanding:
-- Kondo physics and heavy fermion systems
-- Quantum dots coupled to leads
-- Magnetic impurities in metals (e.g. Co 3d in Cu)
-- f-electron systems (e.g. Ce 4f in CeCoIn₅)
+All energies in eV. The user owns the orbital basis and the parameter values — none are pulled from a database. Source them from DFT+U, constrained-RPA, atomic Hartree–Fock, or experimental fits.
 
-All problems are specified via two structural parameters:
-- **M** (`--num-imp-orbs`): Number of impurity (correlated) orbitals
-- **B** (`--num-bath-per-imp`): Bath sites per impurity orbital
+### Limitations a chemist should know up front
 
-Total spatial orbitals = M × (1 + B), qubits = 2 × orbitals.  Single-orbital star geometry is the special case M=1.
+1. **Kanamori, not Slater–Condon.** The two-electron tensor uses three radial parameters `(U, U′, J_H)`, not the full `(F⁰, F², F⁴, F⁶)` Slater integrals. Adequate for d-shells in cubic environments and for f¹ / f¹³ (one carrier — no two-electron multiplet structure to get wrong). Loses accuracy on excited multiplet spacings for f² through f¹². Roadmapped in [#8](https://github.com/agallojr/qmat-aim-skqd/issues/8).
+2. **No spin-orbit coupling.** Matters for L-S vs j-j coupling in actinides and for the Sm 4f⁵, Eu 4f⁶ ⁷F, and similar fine-structure manifolds. Not in scope; no issue filed yet.
+3. **No Δ(ω) → {V_k, ε_k} fitting.** This is a standalone impurity solver, not a DMFT loop. The user discretizes the hybridization function externally and passes the bath parameters via `--bath-energies` / `--bath-couplings`.
+4. **Crystal field is diagonal.** Off-diagonal CF rotations (lower-than-cubic point groups, trigonal/tetragonal mixing of basis states) are not represented. Workaround: pre-diagonalize the CF block externally and pass the eigenvalues.
+5. **Ground state only.** Excited-state energies require `nroots > 1` in the SCI solve — roadmapped in [#7](https://github.com/agallojr/qmat-aim-skqd/issues/7).
+6. **Bath geometry is star-only.** No chain, no bath-bath hopping. Adequate for Anderson-style impurity problems; not adequate for, e.g., the bath of a CT-QMC reference solver that uses a different discretization.
 
-The Hamiltonian supports full Kanamori interactions:
-- **U** (`--onsite`): Intra-orbital Coulomb repulsion
-- **U′** (`--U-prime`): Inter-orbital Coulomb (defaults to U − 2J_H)
-- **J_H** (`--J-H`): Hund's exchange coupling
-- **μ** (`--mu`): Chemical potential
-- **V** (`--hybridization`): Impurity-bath coupling
-- **ε_CF** (`--crystal-field`): Crystal-field splitting per impurity orbital
+### Validation status
 
-Star geometry: every bath site couples directly to its impurity orbital (no bath-bath hopping).
+| Test | Status |
+|---|---|
+| Single-orbital SIAM at half-filling vs `qc-dft-dmft` reference (`small-sys.toml`) | matches |
+| Multi-orbital Hubbard at half-filling, FCI to 7 sig figs (M=5, B=1, ce-4f geometry, half-filled) | passes (post-Hund Trotter fix) |
+| Hand-built Kanamori H vs `multi_orbital_aim_hamiltonian` on M=2 (machine-precision eigenvalue match) | passes |
+| 8-fold ERI symmetrization (numerical check on M=3) | passes |
+| Hund's-rule ordering S=1 < S=0 on Pr 4f² | covered by `pr-4f2.toml` `[singlet_check]` group |
+| Per-bath enrichment regression (B=1 effective vs B=2 with distinct ε,V) | covered by `bath-richness-test.toml` |
+
+---
+
+## Algorithm
+
+### Sample-based Krylov Quantum Diagonalization (SKQD)
+
+1. Prepare an initial reference state |ψ₀⟩ in the (Nα, Nβ) sector — currently a Hartree-Fock-like occupation-number state.
+2. Generate Krylov circuits |ψₖ⟩ ≈ T(dt)ᵏ |ψ₀⟩ where `T(dt)` is a Trotterized real-time evolution under H. Available product formulas: 1st-order Lie, 2nd-order Strang (default), 4th-order Suzuki S4. Sub-stepping is also available (`--trotter-substeps`).
+3. Sample computational-basis bitstrings from each |ψₖ⟩ on a simulator or on hardware.
+4. Project H onto the support of all sampled bitstrings, and diagonalize classically via [qiskit-addon-sqd](https://github.com/Qiskit/qiskit-addon-sqd) (which calls PySCF FCI under the hood).
+
+The classical SCI step *selects the determinants* — the quantum side only needs to make sure the ground-state determinants are *visible* in the bitstring distribution. SKQD does not require expectation-value estimation, so it is more shot-efficient than VQE for problems where the ground state has sparse determinant support.
+
+### Trotter accuracy and the `dt` knob
+
+A pre-flight diagnostic (`--check-trotter`, restricted to ≤ 6 spatial orbitals) computes ‖T(dt) − e^{−iHdt}‖₂ on the half-filled sector and reports the rigorous fidelity bound `1 − ε²`. Two `dt`-scale modes:
+
+- `--dt-scale-mode h1e` (default) — `dt = π · dt_mult / ‖h1e‖₂`. Empirically-good large-dt regime for SCI subspace coverage.
+- `--dt-scale-mode full` — `dt = π · dt_mult / (‖h1e‖₂ + max|h2e|)`. Trotter-accurate but produces tightly clustered Krylov states; pair with `--trotter-substeps` and a larger `--dt-mult` for SQD use.
+
+These are different objectives. SCI subspace coverage wants the Krylov states *spread*; product-formula accuracy wants them *close to exact*. The default favors coverage.
+
+### Five-step pipeline
+
+| Step | Source | Output |
+|---|---|---|
+| 1. Build AIM Hamiltonian | `src/step1_siam.py` | `h1e.npy`, `h2e.npy`, `case_info.json` |
+| 2. Build Krylov circuits (Trotter) | `src/step2_krylov.py` | `circuits.qpy`, `circuit_metadata.json` |
+| 3. Transpile | `src/step3_transpile.py` | `transpiled_circuits.qpy`, `transpile_stats.json` |
+| 4. Execute (sim / fake / hardware) | `src/step4_execute.py` | `counts.json`, `bitstrings.npy`, `probabilities.npy` |
+| 5. Classical SCI diagonalization | `src/step5_postprocess.py` | `energy_history.json`, result JSON |
+
+Each step is independently runnable from a case directory.
+
+---
 
 ## Getting Started
 
-### 1. Install uv
-
-[uv](https://github.com/astral-sh/uv) is a fast Python package manager. Install it with:
+### Install
 
 ```bash
-# macOS/Linux
-curl -LsSf https://astral.sh/uv/install.sh | sh
-
-# Or with Homebrew
-brew install uv
-```
-
-### 2. Create and activate a virtual environment
-
-```bash
+curl -LsSf https://astral.sh/uv/install.sh | sh   # macOS/Linux
 cd qmat-aim-skqd
-uv venv
-source .venv/bin/activate
-```
-
-### 3. Install dependencies
-
-```bash
+uv venv && source .venv/bin/activate
 uv sync
 ```
 
-### 4. Run a single case directly
+### Run a single case
 
 ```bash
-# Single-orbital: 1 imp + 3 bath = 4 orbs = 8 qubits
-python src/run-skqd.py --num-imp-orbs 1 --num-bath-per-imp 3 --shots 1024
+# Single-orbital Anderson, half-filling (default): 1 imp + 3 bath = 4 orbs = 8 qubits
+python src/run-skqd.py --num-imp-orbs 1 --num-bath-per-imp 3 --shots 4096
 
-# Multi-orbital Ce 4f: 3 imp + 1 bath each = 6 orbs = 12 qubits
-python src/run-skqd.py --num-imp-orbs 3 --num-bath-per-imp 1 \
-    --onsite 6.0 --U-prime 4.6 --J-H 0.7 --mu 3.0 --hybridization 0.5 \
-    --crystal-field -0.1,0.0,0.1 --shots 5000
+# Ce 4f^1 — proper atomic filling (1 electron, spin-up)
+python src/run-skqd.py --num-imp-orbs 5 --num-bath-per-imp 1 \
+    --n-electrons-alpha 1 --n-electrons-beta 0 \
+    --onsite 6.0 --U-prime 4.6 --J-H 0.7 --mu 3.0 --hybridization 0.4 \
+    --crystal-field "-0.15,-0.05,0.0,0.05,0.15" \
+    --shots 65536
+
+# Pr 4f^2 — Hund's-rule high-spin sector
+python src/run-skqd.py --num-imp-orbs 5 --num-bath-per-imp 1 \
+    --n-electrons-alpha 2 --n-electrons-beta 0 \
+    --onsite 6.5 --U-prime 5.0 --J-H 0.75 --mu 3.0 --hybridization 0.3 \
+    --crystal-field "-0.15,-0.05,0.0,0.05,0.15" \
+    --shots 65536
 ```
 
-### 5. Run a parameter sweep (via q8020-sweep)
+### Run a parameter sweep (q8020-sweep)
 
 ```bash
-q8020-sweep input/smoke-test.toml          # quick 8-qubit sanity check
-q8020-sweep input/ce-4f.toml               # 12-qubit multi-orbital
-q8020-sweep input/ce-4f-stretch.toml       # 20-qubit stretch case
+q8020-sweep input/smoke-test.toml             # 8q SIAM sanity check
+q8020-sweep input/small-sys.toml              # 12q SIAM, comparable to qc-dft-dmft reference
+q8020-sweep input/bath-richness-test.toml     # 12q regression for per-bath ε/V plumbing
+q8020-sweep input/ce-4f1.toml                 # 20q Ce 4f^1
+q8020-sweep input/pr-4f2.toml                 # 20q Pr 4f^2 (Hund's-rule check)
 q8020-sweep input/smoke-test.toml --dry-run
 ```
 
-The sweeper expands list-valued parameters into a cross-product of cases, calls `run-skqd.py` for each, and collects results.
-
-## Workflow
-
-The algorithm proceeds in five steps:
-
-1. **Step 1** (`src/step1_siam.py`): Build AIM Hamiltonian (Kanamori interactions, crystal field)
-2. **Step 2** (`src/step2_krylov.py`): Construct Krylov circuits using Trotterized time evolution
-3. **Step 3** (`src/step3_transpile.py`): Transpile circuits for the target backend
-4. **Step 4** (`src/step4_execute.py`): Execute circuits and collect bitstring samples
-5. **Step 5** (`src/step5_postprocess.py`): Classical SQD diagonalization to extract ground state energy
-
-## CLI Reference
-
-```
-python src/run-skqd.py [OPTIONS]
-```
-
-### Krylov Circuit Parameters
-
-| Flag | Type | Default | Description |
-|------|------|---------|-------------|
-| `--krylov-dim` | int | 5 | Number of Krylov basis states to generate |
-| `--dt-mult` | float | 1.0 | Time step multiplier for Trotter evolution |
-
-### Execution Parameters
-
-| Flag | Type | Default | Description |
-|------|------|---------|-------------|
-| `--shots` | int | 1024 | Number of measurement shots per circuit |
-| `--opt-level` | int | 1 | Qiskit transpiler optimization level (0-3) |
-
-### Backend Parameters
-
-| Flag | Type | Default | Description |
-|------|------|---------|-------------|
-| `--backend` | str | none | Fake backend name for topology/noise (e.g. `manila`, `jakarta`, `brisbane`) |
-| `--backend-type` | str | sim | Execution mode: `sim` (AerSimulator), `fake` (FakeBackendV2), `hardware` (IBM Quantum) |
-| `--coupling-map` | str | default | Coupling map: `default` (backend native) or `all-to-all` (full connectivity) |
-| `--t1` | float | none | T1 relaxation time in µs (overrides backend noise model) |
-| `--t2` | float | none | T2 dephasing time in µs (overrides backend noise model) |
-
-Backend modes:
-- **No `--backend`**: Ideal statevector simulation, no noise, full connectivity
-- **`--backend manila`**: AerSimulator with Manila's topology + calibrated noise model
-- **`--backend manila --t1 50 --t2 70`**: Manila topology with custom thermal relaxation
-- **`--backend manila --coupling-map all-to-all`**: Manila noise but full connectivity
-- **`--backend-type hardware --backend ibm_brisbane`**: Real IBM Quantum hardware
-
-### Hamiltonian Parameters
-
-Unified AIM interface: single-orbital star geometry is `--num-imp-orbs 1`.
-
-| Flag | Type | Default | Description |
-|------|------|---------|-------------|
-| `--num-imp-orbs` | int | 1 | Number of impurity orbitals M |
-| `--num-bath-per-imp` | int | 1 | Bath sites per impurity orbital B |
-| `--onsite` | float | 4.0 | Intra-orbital Coulomb repulsion U (eV) |
-| `--U-prime` | float | U−2J_H | Inter-orbital Coulomb U′ (eV) |
-| `--J-H` | float | 0.0 | Hund's exchange coupling (eV) |
-| `--mu` | float | 2.0 | Chemical potential (eV) |
-| `--hybridization` | float | 0.8 | Impurity-bath coupling V (eV) |
-| `--crystal-field` | str | none | Crystal-field energies, comma-separated (eV) |
-
-Total orbitals = M × (1 + B).  Qubits = 2 × orbitals.  Half-filling assumed (N_elec = N_orbs).
-
-### SQD Post-processing Parameters
-
-| Flag | Type | Default | Description |
-|------|------|---------|-------------|
-| `--max-iter` | int | 10 | Maximum SQD self-consistent iterations |
-| `--num-batches` | int | 5 | Number of batches for subspace construction |
-| `--samples-per-batch` | int | 200 | Samples drawn per batch |
-
-### Output Control
-
-| Flag | Type | Default | Description |
-|------|------|---------|-------------|
-| `--output-dir` | path | none | Directory for case output files |
-| `--no-persist` | flag | false | Disable saving intermediate results |
-
-## TOML Sweep Configuration
-
-TOML files in `input/` are formatted for [q8020-sweep](https://github.com/Q8020-CFD/q8020-cfd-metautil). Example:
-
-```toml
-[global]
-_output_dir = "~/output"
-_script = "python src/run-skqd.py"
-_inject_outdir = "--output-dir"
-
-"--num-imp-orbs" = 1       # M=1 impurity orbital
-"--num-bath-per-imp" = 3   # B=3 bath sites → 4 orbs, 8 qubits
-"--krylov-dim" = 3
-"--onsite" = 4.0           # U (eV)
-"--mu" = 2.0               # chemical potential (eV)
-"--hybridization" = 0.8    # V (eV)
-"--backend-type" = "sim"
-
-[statevector]
-"--shots" = 0              # exact statevector sampling
-
-[sampled]
-"--shots" = [1024, 4096]
-```
-
-List values expand into a cross-product of cases. Group-level keys override globals.
+The sweeper expands list-valued TOML parameters into a cross-product of cases, calls `run-skqd.py` for each, and collects results.
 
 ### Available configurations
 
-| File | System | Qubits | Hilbert dim | Purpose |
-|------|--------|--------|-------------|---------|
-| `smoke-test.toml` | Co 3d / Cu (1 imp × 3 bath) | 8 | 36 | Quick sanity check |
-| `small-sys.toml` | Co 3d / Cu (1 imp × 5 bath) | 12 | 400 | Baseline single-orbital |
-| `convergence-study.toml` | AIM (1 imp × 7 bath) | 16 | 4,900 | Shot-count sensitivity |
-| `ce-4f.toml` | Ce 4f (3 imp × 1 bath) | 12 | 400 | Multi-orbital Kanamori |
-| `ce-4f-stretch.toml` | Ce 4f (5 imp × 1 bath) | 20 | 63,504 | Stretch — ansatz-limited |
+| File | System | Filling | Qubits | Sector dim | Purpose |
+|---|---|---|---|---|---|
+| [`smoke-test.toml`](input/smoke-test.toml) | SIAM (Co 3d / Cu, M=1, B=3) | half-filled | 8 | 36 | Pipeline regression |
+| [`small-sys.toml`](input/small-sys.toml) | SIAM (M=1, B=5) | half-filled | 12 | 400 | Cross-check vs `qc-dft-dmft` |
+| [`bath-richness-test.toml`](input/bath-richness-test.toml) | M=2, B=2 with three bath configs | half-filled | 12 | 225 | Per-bath ε/V plumbing regression |
+| [`ce-4f1.toml`](input/ce-4f1.toml) | Ce 4f¹ (M=5, B=1) | (n↑, n↓) = (1, 0) | 20 | 10 | Atomic Ce |
+| [`pr-4f2.toml`](input/pr-4f2.toml) | Pr 4f² (M=5, B=1) | (n↑, n↓) = (2, 0) high-spin; singlet check too | 20 | 45 | Hund's-rule ordering test |
+
+Sector dim is the FCI dimension `C(N_orb, n↑) · C(N_orb, n↓)` — qubit count alone is misleading for non-half-filling.
+
+---
+
+## CLI Reference
+
+### Hamiltonian
+
+| Flag | Type | Default | Description |
+|---|---|---|---|
+| `--num-imp-orbs` | int | 1 | Impurity orbitals M |
+| `--num-bath-per-imp` | int | 1 | Bath sites per impurity B |
+| `--onsite` | float | 4.0 | Intra-orbital Coulomb U (eV) |
+| `--U-prime` | float | U − 2·J_H | Inter-orbital Coulomb U′ (eV) |
+| `--J-H` | float | 0.0 | Hund's exchange J_H (eV) |
+| `--mu` | float | 2.0 | Chemical potential μ (eV) |
+| `--hybridization` | float | 0.8 | Scalar V (broadcast across all M·B baths) |
+| `--bath-energies` | str | zeros | Per-bath ε, comma-sep length M·B (eV), row-major (m, b) |
+| `--bath-couplings` | str | broadcast `--hybridization` | Per-bath V, comma-sep length M·B (eV) |
+| `--crystal-field` | str | none | Diagonal CF eigenvalues, comma-sep length M (eV) |
+| `--n-electrons` | int | N_orb (half-filling) | Total electrons; split evenly between spins |
+| `--n-electrons-alpha` | int | n_electrons // 2 | α (spin-↑) electrons |
+| `--n-electrons-beta` | int | n_electrons − n_α | β (spin-↓) electrons |
+| `--system-label` | str | none | Free-form label for output |
+
+### Krylov / Trotter
+
+| Flag | Type | Default | Description |
+|---|---|---|---|
+| `--krylov-dim` | int | 5 | Number of Krylov basis states |
+| `--dt-mult` | float | 1.0 | Time-step multiplier |
+| `--dt-scale-mode` | str | `h1e` | `h1e` (legacy) or `full` (omega_h1e + max\|h2e\|) |
+| `--trotter-order` | int | 2 | 1 (Lie), 2 (Strang), 4 (Suzuki S4) |
+| `--trotter-substeps` | int | 1 | Sub-divisions per Krylov increment |
+| `--check-trotter` | flag | off | Pre-flight: ‖T(dt) − e^{−iHdt}‖₂ on N≤6 sector |
+
+### Execution / backend
+
+| Flag | Type | Default | Description |
+|---|---|---|---|
+| `--shots` | int | 1024 | Measurement shots per circuit |
+| `--opt-level` | int | 1 | Qiskit transpiler optimization level |
+| `--backend` | str | none | Fake backend name (e.g. `manila`, `brisbane`) |
+| `--backend-type` | str | `sim` | `sim` (AerSimulator), `fake` (FakeBackendV2), `hardware` (IBM Quantum) |
+| `--coupling-map` | str | `default` | `default` (backend native) or `all-to-all` |
+| `--t1`, `--t2` | float | none | Override T1/T2 (µs) on top of backend noise model |
+
+### SQD post-processing
+
+| Flag | Type | Default | Description |
+|---|---|---|---|
+| `--max-iter` | int | 10 | Max SQD self-consistent iterations |
+| `--num-batches` | int | 5 | Batches for subspace construction |
+| `--samples-per-batch` | int | 200 | Samples per batch |
+
+### Output
+
+| Flag | Type | Default | Description |
+|---|---|---|---|
+| `--output-dir` | path | none | Directory for case output files |
+| `--no-persist` | flag | off | Skip writing intermediates |
+
+---
 
 ## Output
 
-Each case emits a JSON result line on stdout:
+Each case emits one JSON line on stdout:
 
 ```
-SKQD_RESULT_JSON:{"sqd_energy": -12.345, "exact_energy": -12.346, "error_pct": 0.008, ...}
+SKQD_RESULT_JSON:{"sqd_energy": -2.876, "exact_energy": -2.876, "error_pct": 1.5e-5, ...}
 ```
 
-When `--output-dir` is provided, the solver writes:
-- **Hamiltonian**: `h1e.npy`, `h2e.npy`
-- **Circuits**: `circuits.qpy`, `transpiled_circuits.qpy`, `circuit_metadata.json`, `transpile_stats.json`
-- **Execution**: `counts.json`, `bitstrings.npy`, `probabilities.npy`
-- **Results**: `energy_history.json`
-
-**Metadata fragments** (q8020 format) capture open-box reproducibility info:
+When `--output-dir` is supplied, the solver writes per-case artifacts and the [q8020](https://github.com/Q8020-CFD/q8020-cfd-metautil) metadata fragments below.
 
 | Fragment | Contents |
-|----------|----------|
-| `q8020_case_*.json` | Orbital geometry, Kanamori params (U, U′, J_H), crystal field, electron sector (nelec, Hilbert dim), solver config |
-| `q8020_code_*.json` | Algorithm, entry point, full run_args, library versions |
+|---|---|
+| `q8020_case_*.json` | Orbital geometry; Kanamori (U, U′, J_H, μ, V, ε_p, ε_CF); electron sector (n↑, n↓, sector dim); solver config |
+| `q8020_code_*.json` | Algorithm name, entry point, full run_args, library versions |
 | `q8020_backend_*.json` | Backend type, coupling map, noise model, basis gates |
-| `q8020_exec_stats_*.json` | Per-step timing, circuit depths/gate counts, shots per circuit, total samples, unique bitstrings |
-| `q8020_results_*.json` | SQD energy, FCI exact energy, error (eV, meV, %), convergence flag, full energy history |
+| `q8020_exec_stats_*.json` | Per-step timing, depths/gate counts, shots, total samples, unique bitstrings |
+| `q8020_results_*.json` | SQD energy, FCI exact, error (eV / meV / %), convergence, full energy history, Trotter pre-flight distance |
+
+---
 
 ## Dependencies
 
-- **Qiskit** ≥2.0 (circuits, transpilation)
-- **Qiskit Aer** (statevector/shot-based simulation)
-- **qiskit-addon-sqd** (sample-based quantum diagonalization)
-- **PySCF** (exact FCI reference energies)
-- **ffsim** (fermionic simulation utilities)
+- **Qiskit** ≥ 2.0 (circuits, transpilation)
+- **Qiskit Aer** (statevector / shot-based simulation)
+- **qiskit-addon-sqd** (sample-based selected-CI)
+- **PySCF** (FCI reference)
+- **ffsim** (fermionic operators, Jordan–Wigner mapping, orbital rotations)
 - **NumPy**, **SciPy**
-- **q8020-cfd-metautil** (sweep orchestration, metadata capture)
-- **q8020-cfd-qutil** (backend rigging: sim/fake/hardware modes, coupling maps, noise models)
+- **q8020-cfd-metautil** (sweep orchestration, metadata)
+- **q8020-cfd-qutil** (backend rigging)
+
+---
+
+## References
+
+- *Sample-based Quantum Diagonalization* — [Robledo-Moreno et al., arXiv:2405.05068](https://arxiv.org/abs/2405.05068)
+- *Krylov Variational Quantum Algorithm for First-Principles Materials Simulations* — [Baker et al., arXiv:2105.13298](https://arxiv.org/abs/2105.13298)
+- *Hybrid Quantum-Classical Approach to Correlated Materials* — [Bauer et al., Phys. Rev. X 6, 031045 (2016)](https://link.aps.org/doi/10.1103/PhysRevX.6.031045)
+- Companion / reference repo: [qc-dft-dmft](https://code.ornl.gov/se-qcwg/qc-dft-dmft) (single-orbital DMFT impurity solver with VQE / variational Lanczos)

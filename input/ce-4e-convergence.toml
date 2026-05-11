@@ -1,0 +1,50 @@
+# 4-electron model with challenging parameters for SQD convergence.
+#
+# Uses smaller Krylov dimensions and lower shots to force incomplete initial
+# sampling, so SQD iteratively improves via self-consistency.
+
+[global]
+_output_dir = "~/output"
+_script = "python src/run-skqd.py"
+_inject_outdir = "--output-dir"
+
+"--system-label" = "Ce-like 4e / 20q"
+"--num-imp-orbs" = 2
+"--num-bath-per-imp" = 4
+"--n-electrons-alpha" = 2
+"--n-electrons-beta" = 2
+# Kanamori interactions
+"--onsite" = 6.0
+"--U-prime" = 4.6
+"--J-H" = 0.7
+"--mu" = 3.0
+"--hybridization" = 0.4
+# Bath structure
+"--bath-energies" = "-2.0,-1.0,0.0,1.0,-2.0,-1.0,0.0,1.0"
+"--bath-couplings" = "0.4,0.4,0.4,0.4,0.4,0.4,0.4,0.4"
+# Krylov / circuit params — SMALLER k to force incomplete sampling
+"--dt-mult" = 1.5
+"--opt-level" = 1
+"--trotter-order" = 2
+"--trotter-substeps" = 1
+# SQD post-processing
+"--max-iter" = 30
+"--num-batches" = 5
+"--samples-per-batch" = 100
+# Backend
+"--backend-type" = "sim"
+"--coupling-map" = "default"
+_final_postproc = ["python src/plot_convergence.py"]
+
+
+[k2]
+"--krylov-dim" = 2
+"--shots" = [2048, 4096, 8192]
+
+[k3]
+"--krylov-dim" = 3
+"--shots" = [4096, 8192, 16384]
+
+[k4]
+"--krylov-dim" = 4
+"--shots" = [8192, 16384]

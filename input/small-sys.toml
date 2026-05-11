@@ -1,44 +1,29 @@
-# Small system study — single-orbital AIM for Co 3d in bulk Cu
-#
-# Matches the qc-dft-dmft test case (tests/run_qla.sh):
-#   U  = 2.0 eV   screened Coulomb repulsion
-#   mu = 1.0 eV   chemical potential (half-filling, particle-hole symmetric)
-#   V  = 1.0 eV   impurity-bath hybridisation
-#   1 imp × 5 bath = 6 spatial orbitals → 12 qubits
-#
-# Star geometry: impurity couples uniformly to all bath sites.
-#
-# Run with: q8020-sweep input/small-sys.toml
+# Small SIAM — Co 3d in Cu, 1 imp × 5 bath = 6 orbs / 12 qubits.
+# Matches qc-dft-dmft tests/run_qla.sh.
 
 [global]
 _output_dir = "~/output"
 _script = "python src/run-skqd.py"
 _inject_outdir = "--output-dir"
 
-# System size: 1 impurity orbital, 5 bath sites
+"--system-label" = "Co 3d in Cu"
 "--num-imp-orbs" = 1
 "--num-bath-per-imp" = 5
 "--krylov-dim" = 3
 "--dt-mult" = 1.0
 "--opt-level" = 1
-# Co 3d in Cu — matches qc-dft-dmft: U=2, mu=1, V=1
 "--onsite" = 2.0
 "--mu" = 1.0
 "--hybridization" = 1.0
-# SQD post-processing
 "--max-iter" = 10
 "--num-batches" = 5
 "--samples-per-batch" = 300
-# Backend
 "--backend-type" = "sim"
 "--coupling-map" = "default"
-# Post-sweep convergence plot
 _final_postproc = ["python src/plot_convergence.py"]
 
 [statevector]
-# Exact statevector — no shot noise (shots=0)
 "--shots" = 0
 
 [sampled]
-# Shot-based execution with finite sampling noise
 "--shots" = [5000, 16384]

@@ -1,0 +1,7 @@
+{
+    "include": ["src"],
+    "typeCheckingMode": "basic",
+    "reportUnusedVariable": "warning",
+    "reportUnusedFunction": "warning",
+    "reportUnusedImport": "warning"
+}
