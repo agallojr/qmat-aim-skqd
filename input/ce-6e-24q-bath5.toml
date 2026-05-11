@@ -1,0 +1,58 @@
+# Ce-like 6-electron / 24-qubit system with rich bath (5 per impurity).
+#
+# Geometry: 2 impurity orbitals × 5 bath sites per = 12 spatial orbitals = 24 qubits
+# Electrons: 6 total (3 alpha + 3 beta) → Hilbert dim = C(12,3)^2 ≈ 48k states
+#
+# Rich bath structure (5 sites per impurity) to explore how bath richness
+# affects convergence behavior. Compare against 3-bath variant.
+
+[global]
+_output_dir = "~/output"
+_script = "python src/run-skqd.py"
+_inject_outdir = "--output-dir"
+
+"--system-label" = "Ce-like 6e / 24q (bath5)"
+"--num-imp-orbs" = 2
+"--num-bath-per-imp" = 5
+"--n-electrons-alpha" = 3
+"--n-electrons-beta" = 3
+# Kanamori interactions
+"--onsite" = 6.0
+"--U-prime" = 4.6
+"--J-H" = 0.7
+"--mu" = 3.0
+"--hybridization" = 0.4
+# Bath structure: 2 impurities × 5 bath sites = 10 values per array
+# Energies spaced to create distinct conduction channels
+"--bath-energies" = "-2.0,-1.5,-1.0,-0.5,0.0,-2.0,-1.5,-1.0,-0.5,0.0"
+"--bath-couplings" = "0.4,0.4,0.4,0.4,0.4,0.4,0.4,0.4,0.4,0.4"
+# Krylov / circuit params
+"--dt-mult" = 1.5
+"--opt-level" = 1
+"--trotter-order" = 2
+"--trotter-substeps" = 1
+# SQD post-processing
+"--max-iter" = 40
+"--num-batches" = 6
+"--samples-per-batch" = 150
+# Backend
+"--backend-type" = "sim"
+"--coupling-map" = "default"
+_final_postproc = ["python src/plot_convergence.py"]
+
+
+[k2]
+"--krylov-dim" = 2
+"--shots" = [1024, 2048, 4096, 8192]
+
+[k3]
+"--krylov-dim" = 3
+"--shots" = [2048, 4096, 8192, 16384]
+
+[k4]
+"--krylov-dim" = 4
+"--shots" = [4096, 8192, 16384]
+
+[k5]
+"--krylov-dim" = 5
+"--shots" = [8192, 16384]

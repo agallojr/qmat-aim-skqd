@@ -270,10 +270,10 @@ def plot_convergence(cases: list[dict], run_dir: Path) -> None:
     top_margin = 0.92 - 0.022 * n_header_lines
 
     fig, (ax1, ax2) = plt.subplots(
-        2, 1, figsize=(10, 7.7),
-        gridspec_kw={"height_ratios": [3, 1.4], "hspace": 0.30},
+        1, 2, figsize=(14, 6),
+        gridspec_kw={"width_ratios": [2, 1], "wspace": 0.35},
     )
-    fig.subplots_adjust(top=top_margin, bottom=0.15, right=0.82)
+    fig.subplots_adjust(top=top_margin, bottom=0.12, right=0.98, left=0.08)
 
     # --- Header box: title + physics (single element, no gap) ---
     fig.text(
@@ -315,7 +315,7 @@ def plot_convergence(cases: list[dict], run_dir: Path) -> None:
     ax1.set_ylabel("Ground-state energy (eV)")
     ax1.set_xlabel("SQD iteration")
     ax1.ticklabel_format(useOffset=False, style="plain")
-    ax1.legend(fontsize=8, loc="upper left", bbox_to_anchor=(1.02, 1))
+    ax1.legend(fontsize=8, loc="upper right")
 
     max_iter = max(len(c["energies"]) for c in cases)
     ax1.set_xticks(range(1, max_iter + 1))
