@@ -1,0 +1,92 @@
+# SIAM Kondo benchmark — single Anderson impurity with linear-discretized bath.
+#
+# The textbook quantum-impurity problem: one strongly-correlated localized
+# orbital coupled to a conduction band, approximated here by 11 discrete
+# bath sites spanning [-2, +2] eV (bandwidth D = 2). At half-filling and
+# particle-hole symmetry (μ = U/2), this is the symmetric SIAM Kondo
+# problem — the same setup Wilson solved with NRG in 1975. Every modern
+# quantum-impurity solver (NRG, QMC, DMRG, ED, ...) compares against it.
+#
+# Geometry: M=1 imp × (1+11) = 12 spatial orbitals, 24 qubits.
+# Filling:  half-filled cluster, n_α = n_β = 6  (12 electrons total).
+# Hilbert sector dim: C(12,6)² = 924² = 853,776 states.
+#
+# Sector comparison vs prior runs:
+#   Ce-like 3 imp × 3 bath  (24q,  6e):  sector     48,400
+#   NiO     4 imp × 2 bath  (24q,  8e):  sector    245,025
+#   SIAM-Kondo 1×11 bath    (24q, 12e):  sector    853,776   ← this run
+#
+# Bath discretization (linear, 11 points spanning [-D, +D] = [-2, +2]):
+#   ε_bath = -2.0, -1.6, -1.2, -0.8, -0.4, 0.0, +0.4, +0.8, +1.2, +1.6, +2.0
+#   V_bath = 0.4 eV uniform — flat hybridization Δ(ω) = π V² ρ(ω),
+#                              with ρ(ω) = const for the linear grid
+#
+# Hubbard impurity (canonical Kondo regime, particle-hole symmetric):
+#   U  = 4.0 eV  on-site repulsion on impurity
+#   μ  = 2.0 eV  chemical potential = U/2 (drives ε_imp - μ = -U/2 = -2 eV;
+#                bath stays symmetric about 0 ⇒ exact particle-hole symmetry)
+#   No Kanamori terms — M=1 means no inter-orbital U' or Hund's J_H.
+#
+# Why this should be impressive AND clean:
+#   • Largest sector we've tested by 3.5× — real stress test of SQD coverage.
+#   • Particle-hole symmetric Hamiltonian: GS is a fixed-parity state in a
+#     structured subset of bitstrings. SQD subspace converges monotonically;
+#     no metastable plateaus, no carryover oscillations like NiO's k=7,16k.
+#   • Moderate U (= bandwidth = 2) puts us at U/πΔ ≈ 7.96 — squarely in the
+#     Kondo regime (T_K ≈ exp(-πU/8Δ) small but resolvable), not deep Mott.
+#   • Iconic benchmark: matches Wilson 1975, Bulla et al. RMP 2008, every
+#     impurity-solver development paper. A scientist sees "B=11 Anderson"
+#     and immediately knows the physical reference.
+#
+# Sweeps (same shape as NiO so the plot reads parallel):
+#   k     ∈ {3, 5, 7}    Krylov dimension
+#   shots ∈ {4k, 16k, 65k}
+#
+# Run with: q8020-sweep input/siam-kondo.toml
+
+[global]
+_output_dir = "~/output"
+_script = "python src/run-skqd.py"
+_inject_outdir = "--output-dir"
+
+"--system-label" = "SIAM Kondo (B=11)"
+"--num-imp-orbs" = 1
+"--num-bath-per-imp" = 11
+# Half-filled cluster — symmetric Kondo problem
+"--n-electrons-alpha" = 6
+"--n-electrons-beta" = 6
+# Hubbard impurity (single-orbital → no Kanamori inter-orbital terms)
+"--onsite" = 4.0
+"--U-prime" = 0.0
+"--J-H" = 0.0
+"--mu" = 2.0
+"--hybridization" = 0.4
+# Linear-discretized bath spanning [-D, +D] with D = 2.0 eV (11 sites)
+"--bath-energies"  = "-2.0,-1.6,-1.2,-0.8,-0.4,0.0,0.4,0.8,1.2,1.6,2.0"
+"--bath-couplings" = "0.4,0.4,0.4,0.4,0.4,0.4,0.4,0.4,0.4,0.4,0.4"
+# Krylov / Trotter
+"--dt-mult" = 1.0
+"--opt-level" = 1
+"--trotter-order" = 2
+"--trotter-substeps" = 1
+# SQD postprocessing — same budget as NiO for direct comparability
+"--max-iter" = 30
+"--num-batches" = 10
+"--samples-per-batch" = 400
+# Backend
+"--backend-type" = "sim"
+"--coupling-map" = "default"
+_final_postproc = ["python src/plot_convergence.py"]
+
+
+[k3]
+"--krylov-dim" = 3
+"--shots" = [4096, 16384, 65536]
+
+[k5]
+"--krylov-dim" = 5
+"--shots" = [4096, 16384, 65536]
+
+[k7]
+"--krylov-dim" = 7
+"--shots" = [4096, 16384, 65536]

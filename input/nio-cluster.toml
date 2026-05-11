@@ -1,0 +1,96 @@
+# Ni 3d in NiO — 4-orbital cubic d-shell cluster with rich bath.
+#
+# NiO is the textbook charge-transfer Mott insulator: Ni 3d^8 sitting in
+# an octahedral O cage. The active 3d shell (5 orbitals) splits under O_h
+# into eg (2) + t2g (3). We keep M=4 active orbitals (e.g. drop one t2g
+# under further trigonal distortion, or just to keep the qubit count at
+# 24) and give each one B=2 bath sites representing the bonding and anti-
+# bonding combinations of the surrounding O 2p band.
+#
+# Geometry: M=4 imp x (1+2) = 12 spatial orbitals, 24 qubits.
+# Filling: n_alpha = n_beta = 4 (8 electrons total — d^8-like on the
+#   impurity, balanced by partially-filled bath).
+# Hilbert sector dim: C(12,4) * C(12,4) = 495 * 495 = 245,025.
+#
+# Resource step up vs Ce 4f stretch:
+#   Ce 4f stretch:  10 orbs / 20 qubits / sector ~63,500
+#   NiO cluster:    12 orbs / 24 qubits / sector ~245,000  (~4x larger)
+#
+# Why this should show interesting convergence:
+#   - 245k-state sector is well beyond practical SQD subspace size (a few
+#     thousand bitstrings), so subspace coverage is the binding constraint.
+#   - Larger k (more Krylov basis states) widens the time-evolved
+#     trajectory and feeds more bitstrings into SQD per shot.
+#   - More shots reduce the chance of missing important configurations.
+#   - Strong Kanamori (NiO-scale U/J_H) means the GS has substantial
+#     multi-determinantal character — a single Slater determinant won't
+#     cut it, and shallow Krylov circuits won't either.
+#
+# Kanamori parameters (photoemission/cRPA values for NiO):
+#   U    = 8.0 eV     intra-orbital Coulomb on 3d
+#   J_H  = 0.9 eV     Hund's exchange
+#   U'   = 6.2 eV     inter-orbital (= U - 2 J_H)
+#   mu   = 4.0 eV     chemical potential
+#   V    = 0.5 eV     impurity-bath hybridization
+#   eps_CF = -0.3, -0.3, 0.0, 0.3 eV  (trigonal-split t2g + lifted eg)
+#
+# Per-bath energies and couplings (length M*B = 8, row-major (m,b)):
+#   bath ε = ±1.0 eV alternating  — bonding / antibonding O 2p edges
+#   bath V = 0.5 eV uniform        — symmetric coupling for now
+#
+# Sweeps:
+#   k   ∈ {3, 5, 7}
+#   shots ∈ {4096, 16384, 65536}
+#
+# Run with: q8020-sweep input/nio-cluster.toml
+
+[global]
+_output_dir = "~/output"
+_script = "python src/run-skqd.py"
+_inject_outdir = "--output-dir"
+
+"--system-label" = "Ni 3d in NiO"
+"--num-imp-orbs" = 4
+"--num-bath-per-imp" = 2
+# d^8-like filling: 4 + 4 = 8 electrons on the 24-spin-orbital cluster
+"--n-electrons-alpha" = 4
+"--n-electrons-beta" = 4
+# NiO-scale Kanamori
+"--onsite" = 8.0
+"--U-prime" = 6.2
+"--J-H" = 0.9
+"--mu" = 4.0
+"--hybridization" = 0.5
+"--crystal-field" = "-0.3,-0.3,0.0,0.3"
+# Per-bath layout (row-major over (m, b)):
+#   (0,0)=-1  (0,1)=+1   (1,0)=-1  (1,1)=+1
+#   (2,0)=-1  (2,1)=+1   (3,0)=-1  (3,1)=+1
+"--bath-energies"  = "-1.0,1.0,-1.0,1.0,-1.0,1.0,-1.0,1.0"
+"--bath-couplings" = "0.5,0.5,0.5,0.5,0.5,0.5,0.5,0.5"
+# Krylov / Trotter
+"--dt-mult" = 1.0
+"--opt-level" = 1
+"--trotter-order" = 2
+"--trotter-substeps" = 1
+# SQD post-processing — modest per-iteration cost; the sector is large
+# so coverage (not iteration count) is the binding constraint
+"--max-iter" = 30
+"--num-batches" = 10
+"--samples-per-batch" = 400
+# Backend
+"--backend-type" = "sim"
+"--coupling-map" = "default"
+_final_postproc = ["python src/plot_convergence.py"]
+
+
+[k3]
+"--krylov-dim" = 3
+"--shots" = [4096, 16384, 65536]
+
+[k5]
+"--krylov-dim" = 5
+"--shots" = [4096, 16384, 65536]
+
+[k7]
+"--krylov-dim" = 7
+"--shots" = [4096, 16384, 65536]

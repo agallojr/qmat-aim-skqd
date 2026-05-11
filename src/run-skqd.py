@@ -7,18 +7,23 @@ Anderson Impurity Model with rotationally-invariant Kanamori interactions.
 The quantum side prepares Krylov-evolved states and samples bitstrings; the
 classical side diagonalizes H projected onto the sampled subspace via SCI.
 
+
 USAGE
     python src/run-skqd.py [OPTIONS]
     python src/run-skqd.py --help
 
-The geometry is fully specified by --num-imp-orbs (M correlated orbitals) and
---num-bath-per-imp (B bath sites per impurity orbital, star geometry, no
-bath-bath hopping). Total spatial orbitals = M * (1 + B); qubits = 2 * orbitals.
-Single-orbital Anderson is the special case --num-imp-orbs 1.
+Most users invoke this script through `q8020-sweep input/*.toml` (from the
+q8020-cfd-metautil package), which expands list-valued TOML parameters into
+a cross-product of cases and runs them in batch. See input/ for example
+sweep TOMLs; see the bottom of this docstring for the integration contract.
 
-All energies are in eV. Chemists: see the README "Physics scope" section for
-the explicit second-quantized Hamiltonian and known limitations (Kanamori
-only, no spin-orbit coupling, diagonal crystal field, ground state only).
+The geometry is fully specified by --num-imp-orbs (M correlated orbitals)
+and --num-bath-per-imp (B bath sites per impurity orbital, star geometry,
+no bath-bath hopping). Total spatial orbitals = M * (1 + B); qubits =
+2 * orbitals. Single-orbital Anderson is the special case --num-imp-orbs 1.
+
+Values are unit-agnostic numerically; the convention throughout the code
+and outputs is eV.
 
 ==============================================================================
 HAMILTONIAN PARAMETERS
@@ -62,7 +67,8 @@ HAMILTONIAN PARAMETERS
                                   comma-separated, length M*B, row-major
                                   over (impurity m, bath site b). For B=1
                                   this is just M values. Default is all-zero
-                                  (legacy behavior); pair with non-zero
+                                  (appropriate when bath sites are
+                                  equivalent); pair with distinct non-zero
                                   values when B>1 to get distinct bath
                                   channels rather than degenerate ones.
                                   [default: zeros]
@@ -99,8 +105,10 @@ PARTICLE SECTOR
 
   Examples:
     Ce 4f^1:   --n-electrons-alpha 1 --n-electrons-beta 0
-    Pr 4f^2:   --n-electrons-alpha 2 --n-electrons-beta 0   (high-spin S=1)
-    Half-fill: omit all three (legacy default)
+    Pr 4f^2:   --n-electrons-alpha 1 --n-electrons-beta 1   (Sz=0 component
+               of the Hund's S=1 triplet — see EXAMPLES below for why this
+               is preferred over the spin-polarised (2, 0) sector)
+    Half-fill: omit all three (default)
 
 ==============================================================================
 KRYLOV / TROTTER PARAMETERS
@@ -157,6 +165,10 @@ SQD POST-PROCESSING PARAMETERS
   --samples-per-batch N           Samples drawn per batch from the bitstring
                                   distribution. [default: 200]
 
+  (Internal: the SQD symmetrize_spin option is auto-disabled when
+  n_alpha != n_beta, since qiskit-addon-sqd rejects spin symmetrisation
+  off the Sz = 0 sector.)
+
 ==============================================================================
 EXECUTION / BACKEND PARAMETERS
 ==============================================================================
@@ -169,8 +181,10 @@ EXECUTION / BACKEND PARAMETERS
                                   [default: 1]
 
   --backend NAME                  Fake backend name (for topology + noise),
-                                  e.g. 'manila', 'jakarta', 'brisbane', or
-                                  'ibm_brisbane' for hardware mode.
+                                  e.g. 'brisbane', or 'ibm_brisbane' for
+                                  hardware mode. Pick a currently-available
+                                  IBM backend; older names like 'manila' or
+                                  'jakarta' have been retired.
                                   [default: none, full connectivity]
 
   --backend-type {sim,fake,hardware}
@@ -186,12 +200,16 @@ EXECUTION / BACKEND PARAMETERS
                                   all-to-all  full connectivity
                                   [default: default]
 
-  --t1 N                          Override T1 relaxation time (microseconds).
-                                  Applied on top of the backend noise model.
-                                  [default: from backend]
+  --t1 N                          T1 relaxation time (microseconds). For
+                                  --backend-type fake/hardware this overrides
+                                  the calibrated value from the backend; for
+                                  --backend-type sim it parameterises a
+                                  custom noise model. [default: from backend
+                                  or noiseless]
 
-  --t2 N                          Override T2 dephasing time (microseconds).
-                                  [default: from backend]
+  --t2 N                          T2 dephasing time (microseconds); same
+                                  semantics as --t1. [default: from backend
+                                  or noiseless]
 
 ==============================================================================
 OUTPUT / METADATA
@@ -224,10 +242,15 @@ EXAMPLES
       --crystal-field "-0.15,-0.05,0.0,0.05,0.15" \\
       --shots 65536
 
-  # Pr 4f^2 high-spin (Hund's-rule S=1 ground state)
+  # Pr 4f^2 triplet — Sz=0 component of the Hund's-rule S=1 ground state.
+  # Use (1, 1) rather than the spin-polarised (2, 0): pyscf's selected_ci
+  # divides by nelec[1] and silently returns wrong energies when either
+  # spin count is zero. By SU(2) symmetry the (1, 1) Sz=0 sector is exactly
+  # degenerate with (2, 0) and (0, 2) for the triplet, so SQD on (1, 1)
+  # reports the same triplet energy without hitting the upstream bug.
   python src/run-skqd.py \\
       --num-imp-orbs 5 --num-bath-per-imp 1 \\
-      --n-electrons-alpha 2 --n-electrons-beta 0 \\
+      --n-electrons-alpha 1 --n-electrons-beta 1 \\
       --onsite 6.5 --U-prime 5.0 --J-H 0.75 --mu 3.0 --hybridization 0.3 \\
       --crystal-field "-0.15,-0.05,0.0,0.05,0.15" \\
       --shots 65536

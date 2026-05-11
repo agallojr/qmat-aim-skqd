@@ -42,8 +42,11 @@ def provenance(run_dir: Path) -> tuple[str, str]:
 def _load_group_map(run_dir: Path) -> dict[str, str]:
     """Read _final_postproc.json and return {case_dir_name: group_name}.
 
-    The sweep writes parallel arrays case_dirs[i] ↔ groups[i]; both may
-    be absent on standalone runs, in which case an empty map is returned.
+    Only safe to trust when case_dirs and groups are the same length —
+    the sweep writer often emits one groups[] entry per TOML section
+    but one case_dirs[] entry per *expanded* case (after inner-sweep
+    expansion), so the parallel-array assumption silently mis-aligns.
+    Returns {} unless the arrays match in length.
     """
     fp = run_dir / "_final_postproc.json"
     if not fp.exists():
@@ -52,6 +55,8 @@ def _load_group_map(run_dir: Path) -> dict[str, str]:
         meta = json.load(f)
     case_dirs = meta.get("case_dirs") or []
     groups = meta.get("groups") or []
+    if len(case_dirs) != len(groups):
+        return {}
     return {Path(d).name: g for d, g in zip(case_dirs, groups)}
 
 
@@ -269,11 +274,21 @@ def plot_convergence(cases: list[dict], run_dir: Path) -> None:
     n_header_lines = header.count("\n") + 1
     top_margin = 0.92 - 0.022 * n_header_lines
 
+    # Generous height so the table doesn't fight the plot for vertical room.
+    # Scale table-panel height with the number of cases (each row needs
+    # ~0.35 inches once the column headers and FCI footer are in).
+    n_rows = len(cases) + 2  # cases + header + FCI footer
+    table_height = max(3.0, 0.38 * n_rows)
+    plot_height = 9.0
+    fig_height = plot_height + table_height + 1.0  # +1in for margins/header
     fig, (ax1, ax2) = plt.subplots(
-        1, 2, figsize=(14, 6),
-        gridspec_kw={"width_ratios": [2, 1], "wspace": 0.35},
+        2, 1, figsize=(14, fig_height),
+        gridspec_kw={
+            "height_ratios": [plot_height, table_height],
+            "hspace": 0.18,
+        },
     )
-    fig.subplots_adjust(top=top_margin, bottom=0.12, right=0.98, left=0.08)
+    fig.subplots_adjust(top=top_margin, bottom=0.05, right=0.97, left=0.09)
 
     # --- Header box: title + physics (single element, no gap) ---
     fig.text(
@@ -284,38 +299,80 @@ def plot_convergence(cases: list[dict], run_dir: Path) -> None:
         bbox=dict(boxstyle="round,pad=0.5", fc="wheat", alpha=0.85),
     )
 
-    # --- Panel 1: Energy convergence ---
-    cmap = plt.get_cmap("Dark2")
-    colors = [cmap(i / max(len(cases) - 1, 1)) for i in range(len(cases))]
+    # --- Panel 1: |E - E_FCI| convergence on log scale ---
+    # Absolute-energy axes squash converged cases into a smear near FCI
+    # while failed cases drag the y-range. Plotting |ΔE| on a log scale
+    # gives each case its own visual band: chem-accurate (~1e-4 eV) at
+    # the bottom, failed (~1e-1 eV) at the top.
+    #
+    # Color encodes Krylov dim k (a curve's "expressive power"); line
+    # style + marker encode shots (a curve's "sampling density"). That
+    # way k-dependence and shots-dependence are visually orthogonal.
+    k_values = sorted({c["params"].get("--krylov-dim") for c in cases
+                       if c["params"].get("--krylov-dim") is not None})
+    shot_values = sorted({c["shots"] for c in cases
+                          if c["shots"] is not None and c["shots"] > 0})
+    # Hand-picked high-contrast palette (8 distinct hues); cycles if more
+    # k values than colors. Avoids viridis-style gradients where adjacent
+    # k's look nearly identical.
+    distinct_palette = [
+        "#e41a1c",  # red
+        "#377eb8",  # blue
+        "#4daf4a",  # green
+        "#984ea3",  # purple
+        "#ff7f00",  # orange
+        "#a65628",  # brown
+        "#f781bf",  # pink
+        "#000000",  # black
+    ]
+    k_color = {k: distinct_palette[i % len(distinct_palette)]
+               for i, k in enumerate(k_values)}
+    shot_styles = ["-", "--", ":", "-."]
+    shot_markers = ["o", "s", "^", "D"]
+    shot_style = {s: shot_styles[i % 4] for i, s in enumerate(shot_values)}
+    shot_marker = {s: shot_markers[i % 4] for i, s in enumerate(shot_values)}
 
-    for i, c in enumerate(cases):
-        iters = np.arange(1, len(c["energies"]) + 1)
-        energies = np.array(c["energies"])
+    # Plot in (k, shots) order so the legend reads logically
+    cases = sorted(
+        cases,
+        key=lambda c: (
+            c["params"].get("--krylov-dim") or 0,
+            c["shots"] or 0,
+        ),
+    )
+
+    FLOOR = 1e-6  # clamp |ΔE| from below so log axis doesn't blow up
+    for c in cases:
         ex = c["exact_energy"]
-        # When cases share a single FCI we draw it once below; otherwise
-        # tag each curve's legend entry with its own FCI for clarity.
-        legend_label = c["label"]
-        if not cases_share_fci and ex is not None:
-            legend_label = f"{c['label']}  (FCI={ex:.4f})"
+        if ex is None:
+            continue
+        energies = np.array(c["energies"])
+        delta = np.maximum(np.abs(energies - ex), FLOOR)
+        iters = np.arange(1, len(energies) + 1)
+        kd = c["params"].get("--krylov-dim")
+        sh = c["shots"]
+        color = k_color.get(kd, "gray")
+        ls = shot_style.get(sh, "-")
+        marker = shot_marker.get(sh, "o")
         ax1.plot(
-            iters, energies, "o-",
-            color=colors[i], label=legend_label, markersize=5, lw=1.5,
-        )
-        # Per-case FCI line, colored to match its curve. Skipped when
-        # all cases share one FCI (single dashed line drawn below).
-        if not cases_share_fci and ex is not None:
-            ax1.axhline(ex, color=colors[i], ls=":", lw=0.9, alpha=0.7)
-
-    if cases_share_fci and shared_exact is not None:
-        ax1.axhline(
-            shared_exact, color="k", ls="--", lw=1.0,
-            label=f"FCI exact = {shared_exact:.6f} eV",
+            iters, delta, ls + marker,
+            color=color, label=c["label"],
+            markersize=5, lw=1.4, alpha=0.9,
         )
 
-    ax1.set_ylabel("Ground-state energy (eV)")
+    # Reference line at chemical accuracy (1 kcal/mol = 43 meV)
+    ax1.axhline(0.043, color="k", ls="--", lw=0.8, alpha=0.6,
+                label="chem accuracy (43 meV)")
+
+    ax1.set_yscale("log")
+    ax1.set_ylabel("|E − E_FCI|  (eV)")
     ax1.set_xlabel("SQD iteration")
-    ax1.ticklabel_format(useOffset=False, style="plain")
-    ax1.legend(fontsize=8, loc="upper right")
+    ax1.grid(True, which="both", alpha=0.25, lw=0.5)
+    # Legend outside plot area so curves are unobstructed
+    ax1.legend(
+        fontsize=8, loc="center left", bbox_to_anchor=(1.01, 0.5),
+        framealpha=0.9, borderaxespad=0,
+    )
 
     max_iter = max(len(c["energies"]) for c in cases)
     ax1.set_xticks(range(1, max_iter + 1))
@@ -361,8 +418,8 @@ def plot_convergence(cases: list[dict], run_dir: Path) -> None:
         cellLoc="center",
     )
     table.auto_set_font_size(False)
-    table.set_fontsize(8)
-    table.scale(1.0, 1.4)
+    table.set_fontsize(9)
+    table.scale(1.2, 1.6)
 
     for j in range(len(col_labels)):
         table[0, j].set_facecolor("#4472C4")
@@ -392,7 +449,7 @@ def plot_convergence(cases: list[dict], run_dir: Path) -> None:
 
     # --- Glossary box at bottom ---
     fig.text(
-        0.5, 0.01, _GLOSSARY,
+        0.5, 0.005, _GLOSSARY,
         ha="center", va="bottom",
         fontsize=7, family="monospace",
         bbox=dict(boxstyle="round,pad=0.4", fc="#F0F0F0",

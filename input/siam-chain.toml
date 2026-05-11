@@ -1,0 +1,93 @@
+# Chain-geometry SIAM — qt04-skqd's `study-example.toml` Hamiltonian, scaled
+# up to 24 qubits and run through our k/shots sweep.
+#
+# qt04-skqd modeled the canonical 1-D tight-binding SIAM: impurity on site 0,
+# then a chain of N−1 bath sites with nearest-neighbour hopping t, only site
+# 0 carries the on-site Hubbard U, and only site 0↔1 is hybridised by V.
+# That's the Wilson 1975 / NRG starting Hamiltonian.
+#
+# We can't represent bath-bath hopping directly in our star geometry, but
+# the chain bath is *exactly* diagonalisable: every chain eigenstate becomes
+# a momentum-basis bath site with
+#       ε_k = −2 t cos(k π / N),                k = 1, …, N − 1
+#       V_k = V · √(2/N) · sin(k π / N)
+# where N = N_bath + 1. After this rotation the Hamiltonian is literally
+# our star form — same h1e, h2e, same FCI, same GS as the qt04 code. So
+# the values below ARE the qt04 study Hamiltonian, just expressed in the
+# basis our toml expects.
+#
+# Geometry: M = 1 imp × B = 11 bath = 12 spatial, 24 qubits.
+#   (qt04 study-example was N=8 → 16 qubits; we go to 24q to compare
+#    apples-to-apples with siam-kondo.toml and the NiO cluster.)
+# Filling: half-filled cluster, n_α = n_β = 6 (12 electrons).
+# Sector dim: C(12,6)² = 853,776.
+#
+# Bath spectrum (from the chain mapping above, t = 1):
+#   ε_k = -1.9319, -1.7321, -1.4142, -1.0000, -0.5176, 0,
+#         +0.5176, +1.0000, +1.4142, +1.7321, +1.9319    (bandwidth ≈ 4t)
+#   V_k =  0.1057,  0.2041,  0.2887,  0.3536,  0.3943, 0.4082,
+#          0.3943,  0.3536,  0.2887,  0.2041,  0.1057    (sin-shaped envelope)
+# Both arrays are particle-hole symmetric (ε_k → −ε_{N−k}, V symmetric).
+#
+# Hubbard impurity, particle-hole symmetric (matches qt04 filling_factor=-0.5):
+#   U   = 5.0 eV   on-site repulsion on impurity (the qt04 value)
+#   μ   = 2.5 eV   chemical potential = U/2 → ε_imp − μ = −U/2
+#   t   = 1.0 eV   bath hopping (sets the bandwidth and bath-ε scale above)
+#   V   = 1.0 eV   raw impurity–bath hybridisation (sets the V_k scale above)
+#
+# Difference vs siam-kondo.toml (also at M=1, B=11, 24q half-filled):
+#                                siam-kondo            siam-chain (this)
+#   bath ε spacing               LINEAR (∆ = 0.4)      COS-spaced (chain band)
+#   bath V                       UNIFORM (0.4)         SIN-shaped (0.11 → 0.41)
+#   ε_imp − μ                    -2.0                  -2.5
+#   U                            4.0                   5.0
+#   physical interpretation      arbitrary discretisation     1-D tight-binding
+#                                of a flat Δ(ω)        lead — the Wilson 1975
+#                                                      NRG starting point
+#
+# Two real conduction-band-like SIAMs at 24 qubits, side-by-side. Should
+# converge cleanly (particle-hole symmetric) and reproduce a published
+# benchmark Hamiltonian.
+#
+# Run with: q8020-sweep input/siam-chain.toml
+
+[global]
+_output_dir = "~/output"
+_script = "python src/run-skqd.py"
+_inject_outdir = "--output-dir"
+
+"--system-label" = "SIAM chain (N=12)"
+"--num-imp-orbs" = 1
+"--num-bath-per-imp" = 11
+"--n-electrons-alpha" = 6
+"--n-electrons-beta" = 6
+"--onsite" = 5.0
+"--U-prime" = 0.0
+"--J-H" = 0.0
+"--mu" = 2.5
+"--hybridization" = 1.0
+"--bath-energies"  = "-1.931852,-1.732051,-1.414214,-1.000000,-0.517638,0.0,0.517638,1.000000,1.414214,1.732051,1.931852"
+"--bath-couplings" = "0.105662,0.204124,0.288675,0.353553,0.394338,0.408248,0.394338,0.353553,0.288675,0.204124,0.105662"
+"--dt-mult" = 1.0
+"--opt-level" = 1
+"--trotter-order" = 2
+"--trotter-substeps" = 1
+"--max-iter" = 30
+"--num-batches" = 10
+"--samples-per-batch" = 400
+"--backend-type" = "sim"
+"--coupling-map" = "default"
+_final_postproc = ["python src/plot_convergence.py"]
+
+
+[k3]
+"--krylov-dim" = 3
+"--shots" = [4096, 16384, 65536]
+
+[k5]
+"--krylov-dim" = 5
+"--shots" = [4096, 16384, 65536]
+
+[k7]
+"--krylov-dim" = 7
+"--shots" = [4096, 16384, 65536]
