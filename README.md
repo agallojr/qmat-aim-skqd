@@ -100,7 +100,7 @@ The two modes optimize different objectives: SCI subspace coverage benefits from
 | 4. Execute (sim / fake / hardware) | `src/step4_execute.py` | `counts.json`, `bitstrings.npy`, `probabilities.npy` |
 | 5. Classical SCI diagonalization | `src/step5_postprocess.py` | `energy_history.json`, result JSON |
 
-Each step is independently runnable from a case directory.
+See [doc/pipeline.md](doc/pipeline.md) for a per-step description of what each module actually computes.
 
 ---
 
