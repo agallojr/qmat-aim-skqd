@@ -4,7 +4,7 @@
 # sampling, so SQD iteratively improves via self-consistency.
 
 [global]
-_output_dir = "~/output"
+_output_dir = "~/q8020"
 _script = "python src/run-skqd.py"
 _inject_outdir = "--output-dir"
 

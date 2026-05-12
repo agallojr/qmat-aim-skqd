@@ -1,10 +1,18 @@
 """
 Step: Execute circuits on a backend and return results.
 
+Shot-based execution delegates to ``q8020_cfd_qutil.execute_circuit_counts``,
+which dispatches to ``backend.run`` for AerSimulator and to SamplerV2 for
+real IBM hardware, and normalises multi-creg bitstrings.
+
 When shots=0 the circuits are evaluated via exact statevector simulation
 and bitstrings are drawn from the ideal probability distribution
-(no shot noise).  This mirrors the shots=0 convention used by q8020-cfd.
+(no shot noise — and, intentionally, no device noise either; see warning
+in ``execute_circuits``).
 """
+
+import time
+import warnings
 
 import numpy as np
 
@@ -13,6 +21,7 @@ from qiskit.quantum_info import Statevector
 from qiskit_aer import AerSimulator
 
 from qiskit_addon_sqd.counts import counts_to_arrays
+from q8020_cfd_qutil import execute_circuit_counts
 
 _SV_DEFAULT_SAMPLES = 10_000
 
@@ -20,6 +29,7 @@ _SV_DEFAULT_SAMPLES = 10_000
 def _statevector_counts(
     circuits: list[QuantumCircuit],
     num_samples: int = _SV_DEFAULT_SAMPLES,
+    seed: int = 42,
 ) -> dict:
     """Sample bitstrings from exact statevector probabilities.
 
@@ -27,14 +37,13 @@ def _statevector_counts(
     and *num_samples* bitstrings are drawn from the ideal distribution.
     Counts from all circuits are merged.
     """
-    rng = np.random.default_rng(42)
+    rng = np.random.default_rng(seed)
     combined: dict[str, int] = {}
     per_circuit = max(1, num_samples // len(circuits))
 
     for qc in circuits:
-        # Remove measurements so Statevector can evaluate
         bare = qc.remove_final_measurements(inplace=False)
-        assert bare is not None  # inplace=False always returns a new circuit
+        assert bare is not None
         sv = Statevector(bare)
         probs = sv.probabilities()
         num_qubits = qc.num_qubits
@@ -51,7 +60,8 @@ def execute_circuits(
     circuits: list[QuantumCircuit],
     backend=None,
     shots: int = 1024,
-) -> tuple[np.ndarray, np.ndarray, dict]:
+    seed: int | None = None,
+) -> tuple[np.ndarray, np.ndarray, dict, dict]:
     """Execute circuits on a backend and return bitstrings.
 
     Args:
@@ -59,113 +69,88 @@ def execute_circuits(
         backend: Target backend. Defaults to AerSimulator.
         shots: Number of shots per circuit.  When 0, exact statevector
                probabilities are used (no shot noise).
+        seed: Optional simulator seed for reproducibility.
 
     Returns:
-        Tuple of (bitstrings, probabilities, combined_counts).
+        Tuple of (bitstrings, probabilities, combined_counts, exec_info).
+
+        ``exec_info`` summarises the run: backend repr/class, shots config,
+        per-circuit timing & job ids (when available), aggregate wall times.
+        For the statevector path it just records mode + sample count.
     """
-    # --- statevector path (shots == 0) ---
     if shots == 0:
+        if backend is not None and not _is_ideal_aer(backend):
+            warnings.warn(
+                "shots=0 uses exact statevector simulation and IGNORES the "
+                f"configured backend ({backend!r}), including any noise model "
+                "and coupling map. Use shots>0 to exercise the backend.",
+                stacklevel=2,
+            )
         print(
             f"Statevector mode: sampling {_SV_DEFAULT_SAMPLES} "
             f"bitstrings from exact distribution."
         )
-        combined_counts = _statevector_counts(circuits)
+        sv_seed = seed if seed is not None else 42
+        t0 = time.time()
+        combined_counts = _statevector_counts(circuits, seed=sv_seed)
+        wall = time.time() - t0
         bitstrings, probabilities = counts_to_arrays(combined_counts)
         print(f"Collected {len(combined_counts)} unique bitstrings.")
         print(f"Bitstrings shape: {bitstrings.shape}")
-        return bitstrings, probabilities, combined_counts
+        exec_info = {
+            'mode': 'statevector',
+            'samples_total': _SV_DEFAULT_SAMPLES,
+            'num_circuits': len(circuits),
+            'seed': sv_seed,
+            'wall_time': wall,
+            'backend_repr': repr(backend) if backend is not None else None,
+        }
+        return bitstrings, probabilities, combined_counts, exec_info
 
-    # --- shot-based path ---
     if backend is None:
         backend = AerSimulator(method='automatic')
 
-    job = backend.run(circuits, shots=shots)
-    result = job.result()
-
-    print(f"Executed {len(circuits)} circuits with {shots} shots each.")
-
     combined_counts: dict[str, int] = {}
-    for i in range(len(circuits)):
-        counts = result.get_counts(i)
+    per_circuit_info: list[dict] = []
+    t0 = time.time()
+    for qc in circuits:
+        counts, info = execute_circuit_counts(qc, backend, shots=shots, seed=seed)
+        per_circuit_info.append(info)
         for bitstring, count in counts.items():
             combined_counts[bitstring] = (
                 combined_counts.get(bitstring, 0) + count
             )
+    total_wall = time.time() - t0
+
+    print(f"Executed {len(circuits)} circuits with {shots} shots each.")
 
     bitstrings, probabilities = counts_to_arrays(combined_counts)
 
     print(f"Collected {len(combined_counts)} unique bitstrings.")
     print(f"Bitstrings shape: {bitstrings.shape}")
 
-    return bitstrings, probabilities, combined_counts
+    exec_info = {
+        'mode': 'shot',
+        'shots_per_circuit': shots,
+        'num_circuits': len(circuits),
+        'seed': seed,
+        'wall_time': total_wall,
+        'backend_repr': repr(backend),
+        'backend_class': type(backend).__name__,
+        'shots_executed_total': sum(
+            i.get('shots_executed', shots) for i in per_circuit_info
+        ),
+        'backend_time_total': sum(
+            i.get('backend_time', 0.0) or 0.0 for i in per_circuit_info
+        ),
+        'job_ids': [i.get('job_id') for i in per_circuit_info if i.get('job_id')],
+        'per_circuit': per_circuit_info,
+    }
+    return bitstrings, probabilities, combined_counts, exec_info
 
 
-def run_step_execute(
-    circuits: list[QuantumCircuit],
-    shots: int = 1024
-) -> tuple[np.ndarray, np.ndarray, dict]:
-    """Run execution step with default Aer density_matrix backend.
-    
-    Args:
-        circuits: Transpiled circuits to execute.
-        shots: Number of shots per circuit.
-        
-    Returns:
-        Tuple of (bitstrings, probabilities, combined_counts).
-    """
-    return execute_circuits(circuits, shots=shots)
-
-
-def main():
-    """Run step 4 standalone from a case directory."""
-    import json
-    import sys
-    from pathlib import Path
-    from qiskit import qpy
-    from q8020_cfd_qutil import get_backend
-
-    if len(sys.argv) < 2:
-        print("Usage: python step4_execute.py <case_dir>")
-        sys.exit(1)
-
-    case_dir = Path(sys.argv[1])
-
-    # Load case info
-    case_info_path = case_dir / 'case_info.json'
-    if not case_info_path.exists():
-        print(f"Error: {case_info_path} not found")
-        sys.exit(1)
-    with open(case_info_path, 'r', encoding='utf-8') as f:
-        case_info = json.load(f)
-
-    # Load step 3 outputs
-    transpiled_path = case_dir / 'transpiled_circuits.qpy'
-    if not transpiled_path.exists():
-        print(f"Error: transpiled_circuits.qpy not found in {case_dir}")
-        sys.exit(1)
-    with open(transpiled_path, 'rb') as f:
-        transpiled = qpy.load(f)
-
-    # Create backend via qutil
-    backend = get_backend(
-        name=case_info.get('backend'),
-        backend_type=case_info.get('backend_type', 'sim'),
-        t1=case_info.get('t1'),
-        t2=case_info.get('t2'),
-        coupling_map=case_info.get('coupling_map', 'default'),
-    )
-
-    # Execute
-    shots = case_info.get('shots', 1024)
-    bitstrings, probabilities, counts = execute_circuits(transpiled, backend=backend, shots=shots)
-
-    # Save outputs
-    with open(case_dir / 'counts.json', 'w', encoding='utf-8') as f:
-        json.dump(counts, f)
-    np.save(case_dir / 'bitstrings.npy', bitstrings)
-    np.save(case_dir / 'probabilities.npy', probabilities)
-    print("Saved: counts.json, bitstrings.npy, probabilities.npy")
-
-
-if __name__ == "__main__":
-    main()
+def _is_ideal_aer(backend) -> bool:
+    """True iff backend is an AerSimulator with no noise model attached."""
+    if not isinstance(backend, AerSimulator):
+        return False
+    return getattr(backend.options, "noise_model", None) is None

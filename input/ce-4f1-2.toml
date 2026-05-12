@@ -13,7 +13,7 @@
 # Run with: q8020-sweep input/ce-4f1-20q.toml
 
 [global]
-_output_dir = "~/output"
+_output_dir = "~/q8020"
 _script = "python src/run-skqd.py"
 _inject_outdir = "--output-dir"
 

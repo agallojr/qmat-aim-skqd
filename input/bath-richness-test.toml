@@ -33,7 +33,7 @@
 # Run with: q8020-sweep input/bath-richness-test.toml
 
 [global]
-_output_dir = "~/output"
+_output_dir = "~/q8020"
 _script = "python src/run-skqd.py"
 _inject_outdir = "--output-dir"
 

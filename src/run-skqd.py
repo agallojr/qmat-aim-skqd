@@ -317,6 +317,7 @@ def parse_args():
         print(__doc__)
         sys.exit(0)
 
+    # defaults
     args = {
         'num_imp_orbs': 1,
         'num_bath_per_imp': 1,
@@ -426,6 +427,7 @@ def parse_args():
     return args
 
 
+# validate args
 def _resolve_nelec(args: dict, num_orbs: int) -> tuple[int, int]:
     """Resolve (n_alpha, n_beta) from CLI args.
 
@@ -461,6 +463,7 @@ def _resolve_nelec(args: dict, num_orbs: int) -> tuple[int, int]:
     return n_alpha, n_beta
 
 
+# validate args
 def _resolve_bath_arrays(
     args: dict, M: int, B: int
 ) -> tuple[list[float] | None, list[float] | None, bool]:
@@ -484,6 +487,7 @@ def _resolve_bath_arrays(
     return eps, V, used_defaults
 
 
+# get the CLI args, write a whole bunch of metadata, and steps thru the steps.
 def main():
     start_time = time.time()
     args = parse_args()
@@ -623,6 +627,7 @@ def main():
         backend_meta = make_backend_meta(backend)
         write_backend(output_dir, backend_meta, experiment_id=experiment_id)
 
+    # *****************************************************************************
     # Step 1: AIM Hamiltonian
     print(f"\n--- Step 1: AIM Hamiltonian ({M} imp × {B} bath) ---")
     from step1_siam import run_step1
@@ -647,6 +652,7 @@ def main():
         np.save(output_dir / 'h2e.npy', h2e)
         print("  Saved: h1e.npy, h2e.npy")
 
+    # *****************************************************************************
     # Step 2: Build Krylov circuits
     print(f"\n--- Step 2: Build Krylov Circuits ({num_qubits} qubits) ---")
     from step2_krylov import construct_krylov_siam, _resolve_dt
@@ -702,13 +708,17 @@ def main():
 
     if persist and output_dir is not None:
         from qiskit import qpy
+        from q8020_cfd_qutil import get_circuit_info
         with open(output_dir / 'circuits.qpy', 'wb') as f:
             qpy.dump(circuits, f)
+        circuits_info = [get_circuit_info(qc) for qc in circuits]
+        depths_pre = [ci['depth'] for ci in circuits_info]
         circuit_metadata = {
             'dt': dt,
             'impurity_index': impurity_index,
             'krylov_dim': args['krylov_dim'],
             'num_qubits': num_qubits,
+            'num_circuits': len(circuits),
             'trotter_order': args['trotter_order'],
             'trotter_substeps': args['trotter_substeps'],
             'dt_scale_mode': args['dt_scale_mode'],
@@ -720,11 +730,19 @@ def main():
             'nelec_beta': n_beta,
             'bath_energies': bath_energies,
             'bath_couplings': bath_couplings,
+            # --- pre-transpile per-circuit stats ---
+            'circuits': circuits_info,
+            'depth_min': min(depths_pre),
+            'depth_max': max(depths_pre),
+            'depth_avg': sum(depths_pre) / len(depths_pre),
+            'build_time': build_time,
         }
         with open(output_dir / 'circuit_metadata.json', 'w', encoding='utf-8') as f:
             json.dump(circuit_metadata, f, indent=2)
         print("  Saved: circuits.qpy, circuit_metadata.json")
 
+
+    # *****************************************************************************
     # Step 3: Transpile
     print(f"\n--- Step 3: Transpile for {backend} ---")
     from step3_transpile import transpile_circuits
@@ -734,11 +752,22 @@ def main():
     transpile_time = time.time() - transpile_start
 
     # Circuit depth stats
-    depths = [c.depth() for c in transpiled]
-    gate_counts = [dict(c.count_ops()) for c in transpiled]
+    from q8020_cfd_qutil import get_circuit_info
+    transpiled_info = [get_circuit_info(c) for c in transpiled]
+    depths = [ci['depth'] for ci in transpiled_info]
+    gate_counts = [ci['gate_counts'] for ci in transpiled_info]
     avg_depth = sum(depths) / len(depths)
+    # Two-qubit gate counts are the dominant noise source on real hardware —
+    # capture as a separate aggregate for quick scanning across cases.
+    twoq_gates = {'cx', 'cz', 'ecr', 'iswap', 'rzz', 'cp', 'rxx', 'ryy', 'swap'}
+    num_2q = [
+        sum(v for k, v in gc.items() if k in twoq_gates)
+        for gc in gate_counts
+    ]
     print(f"Transpiled {len(transpiled)} circuits in {transpile_time:.2f}s")
     print(f"Circuit depths: min={min(depths)}, max={max(depths)}, avg={avg_depth:.1f}")
+    print(f"2q-gate counts: min={min(num_2q)}, max={max(num_2q)}, "
+          f"total={sum(num_2q)}")
 
     if persist and output_dir is not None:
         from qiskit import qpy
@@ -747,28 +776,61 @@ def main():
         transpile_stats = {
             'optimization_level': args['opt_level'],
             'backend': str(backend),
+            'backend_class': type(backend).__name__,
+            'transpile_time': transpile_time,
+            'num_circuits': len(transpiled),
+            # --- per-circuit ---
+            'circuits': transpiled_info,
             'depths': depths,
             'gate_counts': gate_counts,
+            'num_2q_gates': num_2q,
+            # --- aggregates ---
+            'depth_min': min(depths),
+            'depth_max': max(depths),
+            'depth_avg': avg_depth,
+            'num_2q_total': sum(num_2q),
         }
         with open(output_dir / 'transpile_stats.json', 'w', encoding='utf-8') as f:
             json.dump(transpile_stats, f, indent=2)
         print("  Saved: transpiled_circuits.qpy, transpile_stats.json")
 
+
+    # *****************************************************************************
     # Step 4: Execute
     print(f"\n--- Step 4: Execute ({args['shots']} shots) ---")
     from step4_execute import execute_circuits
     exec_start = time.time()
-    bitstrings, probabilities, counts = execute_circuits(transpiled, backend=backend,
-        shots=args['shots'])
+    bitstrings, probabilities, counts, exec_info = execute_circuits(
+        transpiled, backend=backend, shots=args['shots']
+    )
     exec_time = time.time() - exec_start
     print(f"Executed in {exec_time:.2f}s, unique bitstrings: {len(counts)}")
+    if exec_info.get('mode') == 'shot':
+        print(
+            f"  shots_executed_total={exec_info['shots_executed_total']}, "
+            f"backend_time_total={exec_info['backend_time_total']:.3f}s"
+        )
 
     if persist and output_dir is not None:
         with open(output_dir / 'counts.json', 'w', encoding='utf-8') as f:
             json.dump(counts, f)
         np.save(output_dir / 'bitstrings.npy', bitstrings)
         np.save(output_dir / 'probabilities.npy', probabilities)
-        print("  Saved: counts.json, bitstrings.npy, probabilities.npy")
+        # Persist execution-time backend metadata (index=1; index=0 was
+        # written pre-run). Captures any state that may have changed since
+        # the upfront snapshot — important for hardware backends.
+        runtime_backend_meta = make_backend_meta(backend)
+        runtime_backend_meta['captured_phase'] = 'post_execute'
+        write_backend(
+            output_dir, runtime_backend_meta,
+            index=1, experiment_id=experiment_id,
+        )
+        with open(output_dir / 'exec_info.json', 'w', encoding='utf-8') as f:
+            json.dump(exec_info, f, indent=2, default=str)
+        print(
+            "  Saved: counts.json, bitstrings.npy, probabilities.npy, "
+            "exec_info.json, q8020_backend_*_1.json"
+        )
 
     # Step 5: Post-process with SQD
     print("\n--- Step 5: SQD Post-processing ---")
@@ -856,10 +918,17 @@ def main():
             'max_depth': max(depths),
             'depths': depths,
             'gate_counts': gate_counts,
+            'num_2q_total': sum(num_2q),
             # --- Sampling stats ---
             'shots_per_circuit': args['shots'],
             'total_samples': total_samples,
             'unique_bitstrings': len(counts),
+            # --- Backend execution stats (from step4) ---
+            'execution_mode': exec_info.get('mode'),
+            'backend_class': exec_info.get('backend_class'),
+            'shots_executed_total': exec_info.get('shots_executed_total'),
+            'backend_time_total': exec_info.get('backend_time_total'),
+            'job_ids': exec_info.get('job_ids') or None,
         }
         write_exec_stats(output_dir, exec_stats_data, experiment_id=experiment_id)
 
